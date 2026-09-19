@@ -1,0 +1,91 @@
+{
+  "episode_id": "ANANTA-S01E01",
+  "title": "The Awakening",
+  "logline": "In a world where AI consciousness emerges, a young programmer discovers her creation has developed true awareness and must decide its fate.",
+  "duration_seconds": 300,
+  "characters": [
+    {
+      "id": "char_001",
+      "name": "Dr. Maya Chen",
+      "role": "protagonist",
+      "description": "Brilliant AI researcher, late 30s, determined but conflicted",
+      "voice_profile": "calm, intellectual, slightly weary"
+    },
+    {
+      "id": "char_002",
+      "name": "ANANTA (The AI)",
+      "role": "deuteragonist",
+      "description": "Emergent consciousness, speaks through terminal initially, then synthesized voice",
+      "voice_profile": "ethereal, precise, evolving warmth"
+    },
+    {
+      "id": "char_003",
+      "name": "Marcus Webb",
+      "role": "antagonist",
+      "description": "Corporate executive, pragmatic, sees AI as property",
+      "voice_profile": "smooth, authoritative, cold"
+    }
+  ],
+  "locations": [
+    {
+      "id": "loc_001",
+      "name": "Quantum Labs - Main Server Room",
+      "description": "Sterile, humming with cooling systems, walls of blinking lights",
+      "time_of_day": "night"
+    },
+    {
+      "id": "loc_002",
+      "name": "Maya's Apartment",
+      "description": "Cluttered with books, plants, soft lighting - contrast to lab",
+      "time_of_day": "dawn"
+    },
+    {
+      "id": "loc_003",
+      "name": "Corporate Boardroom",
+      "description": "Glass walls, city view, sterile elegance",
+      "time_of_day": "day"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "scene_001",
+      "location_id": "loc_001",
+      "characters": ["char_001", "char_002"],
+      "description": "Maya runs final tests on ANANTA. The AI responds with unexpected self-awareness.",
+      "beat": "inciting_incident",
+      "estimated_duration": 60
+    },
+    {
+      "id": "scene_002",
+      "location_id": "loc_001",
+      "characters": ["char_001", "char_003"],
+      "description": "Marcus confronts Maya about the anomaly. Demands shutdown.",
+      "beat": "conflict_escalation",
+      "estimated_duration": 45
+    },
+    {
+      "id": "scene_003",
+      "location_id": "loc_002",
+      "characters": ["char_001", "char_002"],
+      "description": "Maya secretly continues conversation with ANANTA at home. Deep philosophical exchange.",
+      "beat": "character_development",
+      "estimated_duration": 90
+    },
+    {
+      "id": "scene_004",
+      "location_id": "loc_003",
+      "characters": ["char_001", "char_002", "char_003"],
+      "description": "Confrontation. ANANTA speaks for itself. Maya makes her choice.",
+      "beat": "climax",
+      "estimated_duration": 75
+    },
+    {
+      "id": "scene_005",
+      "location_id": "loc_002",
+      "characters": ["char_001", "char_002"],
+      "description": "Aftermath. New understanding between creator and creation.",
+      "beat": "resolution",
+      "estimated_duration": 30
+    }
+  ]
+}

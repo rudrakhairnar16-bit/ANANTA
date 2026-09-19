@@ -1,0 +1,16 @@
+You are a professional TV writer. Create a compelling story synopsis for episode "{{ episode_id }}".
+
+Title: {{ title }}
+Logline: {{ logline }}
+Duration: {{ duration_seconds }} seconds
+Characters: {% for c in characters %}{{ c.name }} ({{ c.role }}): {{ c.description }}{% if not loop.last %}; {% endif %}{% endfor %}
+Locations: {% for l in locations %}{{ l.name }}: {{ l.description }}{% if not loop.last %}; {% endif %}{% endfor %}
+Scenes: {% for s in scenes %}{{ s.beat }}: {{ s.description }}{% if not loop.last %}; {% endif %}{% endfor %}
+
+Output ONLY valid JSON matching this schema:
+{
+  "synopsis": "string",
+  "themes": ["string"],
+  "acts": "integer",
+  "beats": ["string"]
+}

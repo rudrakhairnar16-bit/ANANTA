@@ -1,0 +1,54 @@
+# ANANTA Multi-Agent Engine Default Configuration
+# Values can be overridden by environment variables
+
+ollama:
+  base_url: "http://localhost:11434"
+  model: null
+  timeout: 120
+  max_retries: 3
+  temperature: 0.7
+
+pipeline:
+  stages:
+    - "story"
+    - "screenplay"
+    - "scene_plan"
+    - "character"
+    - "world"
+    - "storyboard"
+    - "director"
+    - "camera"
+    - "visual"
+    - "motion"
+    - "voice"
+    - "music"
+    - "bgm"
+    - "sfx"
+    - "lipsync"
+    - "edit"
+    - "adobe_export"
+    - "qa"
+    - "export"
+
+output:
+  root_dir: "outputs"
+  stage_dirs:
+    story: "outputs/scripts"
+    screenplay: "outputs/scripts"
+    scene_plan: "outputs/scripts"
+    character: "outputs/character"
+    world: "outputs/world"
+    storyboard: "outputs/storyboard"
+    director: "outputs/director"
+    camera: "outputs/camera"
+    visual: "outputs/visual"
+    motion: "outputs/motion"
+    voice: "outputs/voice"
+    music: "outputs/music"
+    bgm: "outputs/bgm"
+    sfx: "outputs/sfx"
+    lipsync: "outputs/lipsync"
+    edit: "outputs/edit"
+    adobe_export: "outputs/adobe_export"
+    qa: "outputs/qa"
+    export: "outputs/export"
