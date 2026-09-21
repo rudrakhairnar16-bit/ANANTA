@@ -104,12 +104,22 @@ class PipelineOrchestratorV2:
             try:
                 result = self._execute_pipeline(context)
             except KeyboardInterrupt:
-                self.logger.pipeline_failed(pipeline_id, episode_id, "Interrupted by user", len(context.completed_stages))
+                self.logger.pipeline_failed(
+                    pipeline_id,
+                    episode_id,
+                    "Interrupted by user",
+                    len(context.completed_stages),
+                )
                 pipeline_state.status = "interrupted"
                 self.state_store.save(pipeline_state)
                 raise
             except Exception as e:
-                self.logger.pipeline_failed(pipeline_id, episode_id, str(e), len(context.completed_stages))
+                self.logger.pipeline_failed(
+                    pipeline_id,
+                    episode_id,
+                    str(e),
+                    len(context.completed_stages),
+                )
                 pipeline_state.status = "failed"
                 self.state_store.save(pipeline_state)
                 raise
@@ -150,10 +160,17 @@ class PipelineOrchestratorV2:
                 continue
 
             if stage_state and stage_state.status == StageStatus.FAILED:
-                context.failed_stages.append({"stage": stage, "error": stage_state.error or "Unknown error"})
+                context.failed_stages.append(
+                    {"stage": stage, "error": stage_state.error or "Unknown error"}
+                )
                 break
 
-            self.logger.info(f"Executing stage {stage}", stage=stage, stage_index=i+1, total_stages=len(self.stages))
+            self.logger.info(
+                f"Executing stage {stage}",
+                stage=stage,
+                stage_index=i + 1,
+                total_stages=len(self.stages),
+            )
 
             agent = get_agent_v2(stage)
 
@@ -165,7 +182,11 @@ class PipelineOrchestratorV2:
                 )
                 context.completed_stages.append(stage)
 
-                if self.settings.pipeline.checkpoint_enabled and (i + 1) % self.settings.pipeline.checkpoint_interval == 0:
+                should_checkpoint = (
+                    self.settings.pipeline.checkpoint_enabled
+                    and (i + 1) % self.settings.pipeline.checkpoint_interval == 0
+                )
+                if should_checkpoint:
                     self.checkpoint_manager.checkpoint(pipeline_state)
                     self.logger.checkpoint_saved(context.episode_id, stage)
 
@@ -216,10 +237,10 @@ if __name__ == "__main__":
     try:
         run(args.brief, resume=args.resume)
     except KeyboardInterrupt:
-        print("\n\nPipeline interrupted by user")
+        LOGGER.error("Pipeline interrupted by user")
         sys.exit(1)
     except Exception as e:
-        print(f"\n\nPipeline failed: {e}")
+        LOGGER.error(f"Pipeline failed: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

@@ -109,8 +109,12 @@ class PipelineState:
         self._recalculate_counts()
 
     def _recalculate_counts(self):
-        self.completed_stages = sum(1 for s in self.stages.values() if s.status == StageStatus.COMPLETED)
-        self.failed_stages = sum(1 for s in self.stages.values() if s.status == StageStatus.FAILED)
+        self.completed_stages = sum(
+            1 for s in self.stages.values() if s.status == StageStatus.COMPLETED
+        )
+        self.failed_stages = sum(
+            1 for s in self.stages.values() if s.status == StageStatus.FAILED
+        )
 
     def is_completed(self) -> bool:
         return all(

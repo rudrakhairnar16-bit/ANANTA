@@ -62,10 +62,17 @@ class BaseAgentV2:
         return graph.stages.get(self.stage)
 
     def validate_inputs(self, inputs: dict[str, Any]) -> bool:
-        if self._stage_spec and self._stage_spec.required_inputs:
-            for req in self._stage_spec.required_inputs:
-                if req not in inputs:
-                    return False
+        if not self._stage_spec or not self._stage_spec.required_inputs:
+            return True
+
+        outputs = inputs.get("outputs", {}) if isinstance(inputs.get("outputs"), dict) else {}
+
+        for req in self._stage_spec.required_inputs:
+            if req == "all":
+                continue
+            found = req in inputs or req in outputs
+            if not found:
+                return False
         return True
 
     def process(self, inputs: dict[str, Any]) -> ProviderResponse:
@@ -119,7 +126,12 @@ class BaseAgentV2:
                 raise RuntimeError(f"Stage {self.stage} failed: {error_msg}")
 
             if not response.success:
-                self.logger.stage_failed(self.stage, 0, response.error or "Provider error", duration_ms)
+                self.logger.stage_failed(
+                    self.stage,
+                    0,
+                    response.error or "Provider error",
+                    duration_ms,
+                )
                 if pipeline_state:
                     stage_state = pipeline_state.get_stage(self.stage)
                     if stage_state:
@@ -135,6 +147,15 @@ class BaseAgentV2:
             result_data["inputs"] = inputs
             result_data["approval_status"] = "pending"
 
+            validation_result = self.validator.validate_output(self.stage, result_data)
+            if not validation_result.valid:
+                error_messages = "; ".join(e.message for e in validation_result.errors)
+                self.logger.warning(
+                    f"Output validation failed for {self.stage}",
+                    stage=self.stage,
+                    validation_errors=error_messages,
+                )
+
             if pipeline_state:
                 stage_state = pipeline_state.get_stage(self.stage)
                 if stage_state:
@@ -149,15 +170,30 @@ class BaseAgentV2:
             if pipeline_state:
                 stage_state = pipeline_state.get_stage(self.stage)
                 if stage_state:
-                    stage_state.mark_completed(output_path=artifact_ref.path, metrics=stage_state.metrics)
+                    stage_state.mark_completed(
+                        output_path=artifact_ref.path,
+                        metrics=stage_state.metrics,
+                    )
                     pipeline_state.update_stage(stage_state)
 
             self._write_output_legacy(result_data, episode_id)
 
             self.logger.stage_complete(self.stage, 0, duration_ms)
-            self.logger.artifact_written(self.stage, artifact_ref.path, len(json.dumps(result_data).encode()))
+            self.logger.artifact_written(
+                self.stage,
+                artifact_ref.path,
+                len(json.dumps(result_data).encode()),
+            )
 
             merged = {**inputs, **result_data}
+            has_outputs_merge = (
+                "outputs" in inputs
+                and isinstance(inputs["outputs"], dict)
+                and "outputs" in result_data
+                and isinstance(result_data["outputs"], dict)
+            )
+            if has_outputs_merge:
+                merged["outputs"] = {**inputs["outputs"], **result_data["outputs"]}
             if "inputs" in inputs and isinstance(inputs["inputs"], dict):
                 for key in [
                     "characters",
@@ -178,7 +214,11 @@ class BaseAgentV2:
 
         output_file = output_dir / f"{episode_id}_{self.stage}.json"
         output_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        print(f"  [{self.stage}] Written to {output_file}")
+        self.logger.info(
+            f"Written to {output_file}",
+            stage=self.stage,
+            path=str(output_file),
+        )
 
 
 class StoryAgentV2(BaseAgentV2):

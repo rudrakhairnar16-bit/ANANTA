@@ -32,15 +32,13 @@ def test_log_context_creation():
     assert context.stage == "story"
 
 
-def test_log_context_creation():
-    context = LogContext(correlation_id="test-123", episode_id="TEST-E01", stage="story")
-    assert context.correlation_id == "test-123"
-    assert context.episode_id == "TEST-E01"
-    assert context.stage == "story"
-
-
 def test_log_context_to_dict():
-    context = LogContext(correlation_id="test-123", episode_id="TEST-E01", stage="story", stage_index=1)
+    context = LogContext(
+        correlation_id="test-123",
+        episode_id="TEST-E01",
+        stage="story",
+        stage_index=1,
+    )
     d = context.to_dict()
     assert d["correlation_id"] == "test-123"
     assert d["episode_id"] == "TEST-E01"

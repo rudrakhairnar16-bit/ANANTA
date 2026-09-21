@@ -75,7 +75,7 @@ def test_artifact_store_store(tmp_path):
 def test_artifact_store_get(tmp_path):
     store = ArtifactStore(base_path=tmp_path)
     data = {"episode_id": "TEST", "stage": "story", "outputs": {"synopsis": "Test"}}
-    ref = store.store("TEST-E01", "story", data)
+    store.store("TEST-E01", "story", data)
 
     retrieved_data, metadata = store.get("TEST-E01", "story", version=1)
     assert retrieved_data is not None

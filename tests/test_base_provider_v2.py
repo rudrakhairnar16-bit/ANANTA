@@ -136,3 +136,58 @@ def test_provider_exceptions():
     assert issubclass(ProviderUnavailableError, ProviderError)
     assert issubclass(ProviderTimeoutError, ProviderError)
     assert issubclass(ProviderValidationError, ProviderError)
+
+
+def test_ollama_provider_extract_json_valid():
+    from providers.base_v2 import OllamaProviderV2
+
+    provider = OllamaProviderV2()
+    result = provider._extract_json_from_text(
+        'Here is the result: {"synopsis": "test", "themes": ["a"], "acts": 1, "beats": ["b"]}'
+    )
+    assert isinstance(result, dict)
+    assert result["synopsis"] == "test"
+    assert result["themes"] == ["a"]
+
+
+def test_ollama_provider_extract_json_no_json():
+    from providers.base_v2 import OllamaProviderV2
+
+    provider = OllamaProviderV2()
+    result = provider._extract_json_from_text("No JSON here at all")
+    assert result == {}
+
+
+def test_ollama_provider_extract_json_nested():
+    from providers.base_v2 import OllamaProviderV2
+
+    provider = OllamaProviderV2()
+    result = provider._extract_json_from_text(
+        'Text before {"key": "value"} and more text'
+    )
+    assert result == {"key": "value"}
+
+
+def test_ollama_provider_parse_response_valid_json():
+    from providers.base_v2 import OllamaProviderV2
+
+    provider = OllamaProviderV2()
+    response = {
+        "response": '{"synopsis": "AI story", "themes": ["ethics"], "acts": 3, "beats": ["intro"]}'
+    }
+    result = provider._parse_response(response, {"episode_id": "TEST"})
+    assert result["outputs"]["synopsis"] == "AI story"
+    assert result["outputs"]["themes"] == ["ethics"]
+    assert result["stage"] == "story"
+    assert result["episode_id"] == "TEST"
+
+
+def test_ollama_provider_parse_response_non_json():
+    from providers.base_v2 import OllamaProviderV2
+
+    provider = OllamaProviderV2()
+    response = {"response": "This is plain text without any JSON"}
+    result = provider._parse_response(response, {"episode_id": "TEST"})
+    assert result["outputs"]["synopsis"] == "This is plain text without any JSON"
+    assert result["outputs"]["themes"] == []
+    assert result["outputs"]["acts"] == 3

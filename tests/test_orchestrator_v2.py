@@ -27,7 +27,9 @@ def test_execution_context_creation(mock_env, sample_brief):
     from validation.schemas import StageValidator
 
     settings = get_settings()
-    pipeline_state = create_initial_state(sample_brief["episode_id"], sample_brief["title"], DEFAULT_STAGES)
+    pipeline_state = create_initial_state(
+        sample_brief["episode_id"], sample_brief["title"], DEFAULT_STAGES
+    )
 
     context = ExecutionContext(
         pipeline_id="test-pipeline",
@@ -52,7 +54,9 @@ def test_create_summary(mock_env, sample_brief):
     from validation.schemas import StageValidator
 
     settings = get_settings()
-    pipeline_state = create_initial_state(sample_brief["episode_id"], sample_brief["title"], DEFAULT_STAGES)
+    pipeline_state = create_initial_state(
+        sample_brief["episode_id"], sample_brief["title"], DEFAULT_STAGES
+    )
     pipeline_state.status = "running"
 
     context = ExecutionContext(

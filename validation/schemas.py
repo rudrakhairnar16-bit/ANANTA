@@ -86,7 +86,13 @@ class StageValidator:
                         "type": "array",
                         "items": {
                             "type": "object",
-                            "required": ["scene_id", "location", "characters", "dialogue_blocks", "action_lines"],
+                            "required": [
+                                "scene_id",
+                                "location",
+                                "characters",
+                                "dialogue_blocks",
+                                "action_lines",
+                            ],
                             "properties": {
                                 "scene_id": {"type": "string"},
                                 "location": {"type": "string"},
@@ -139,7 +145,10 @@ class StageValidator:
                     "outputs": {"type": "object"},
                     "assumptions": {"type": "array", "items": {"type": "string"}},
                     "warnings": {"type": "array", "items": {"type": "string"}},
-                    "approval_status": {"type": "string", "enum": ["pending", "approved", "rejected"]},
+                    "approval_status": {
+                        "type": "string",
+                        "enum": ["pending", "approved", "rejected"],
+                    },
                 },
             },
         }
@@ -166,7 +175,12 @@ class StageValidator:
         schema = self.schemas.get(schema_name, self.schemas.get("generic_stage_output"))
         return self._validate(data, schema, f"{stage}_output")
 
-    def _validate(self, data: dict[str, Any], schema: dict[str, Any], context: str) -> ValidationResult:
+    def _validate(
+        self,
+        data: dict[str, Any],
+        schema: dict[str, Any],
+        context: str,
+    ) -> ValidationResult:
         result = ValidationResult(valid=True)
 
         if HAS_JSONSCHEMA and jsonschema:
@@ -195,19 +209,19 @@ class StageValidator:
         path: str = "",
     ) -> ValidationResult:
         required = schema.get("required", [])
-        for field in required:
-            if field not in data:
+        for required_field in required:
+            if required_field not in data:
                 result.add_error(
-                    path=f"{path}.{field}" if path else field,
-                    message=f"Required field '{field}' is missing",
+                    path=f"{path}.{required_field}" if path else required_field,
+                    message=f"Required field '{required_field}' is missing",
                     validator="required",
                 )
 
         properties = schema.get("properties", {})
-        for field, field_schema in properties.items():
-            if field in data:
-                field_path = f"{path}.{field}" if path else field
-                self._validate_field(data[field], field_schema, result, field_path)
+        for field_name, field_schema in properties.items():
+            if field_name in data:
+                field_path = f"{path}.{field_name}" if path else field_name
+                self._validate_field(data[field_name], field_schema, result, field_path)
 
         return result
 
@@ -244,9 +258,8 @@ class StageValidator:
             for i, item in enumerate(value):
                 self._validate_field(item, items_schema, result, f"{path}[{i}]")
 
-        if "enum" in field_schema:
-            if value not in field_schema["enum"]:
-                result.add_error(path, f"Value must be one of {field_schema['enum']}", "enum")
+        if "enum" in field_schema and value not in field_schema["enum"]:
+            result.add_error(path, f"Value must be one of {field_schema['enum']}", "enum")
 
 
 def create_validator(schema_dir: str | Path | None = None) -> StageValidator:
@@ -275,7 +288,13 @@ DEFAULT_SCHEMAS = {
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "required": ["scene_id", "location", "characters", "dialogue_blocks", "action_lines"],
+                    "required": [
+                                "scene_id",
+                                "location",
+                                "characters",
+                                "dialogue_blocks",
+                                "action_lines",
+                            ],
                     "properties": {
                         "scene_id": {"type": "string"},
                         "location": {"type": "string"},
@@ -328,7 +347,10 @@ DEFAULT_SCHEMAS = {
             "outputs": {"type": "object"},
             "assumptions": {"type": "array", "items": {"type": "string"}},
             "warnings": {"type": "array", "items": {"type": "string"}},
-            "approval_status": {"type": "string", "enum": ["pending", "approved", "rejected"]},
+            "approval_status": {
+                        "type": "string",
+                        "enum": ["pending", "approved", "rejected"],
+                    },
         },
     },
 }

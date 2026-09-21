@@ -285,7 +285,11 @@ class StageRecoveryManager:
                 if strategy.action == RecoveryAction.RETRY:
                     if strategy.retry_policy and on_retry:
                         on_retry(attempt + 1, e)
-                    delay = strategy.retry_policy.get_delay(attempt) if strategy.retry_policy else 1.0
+                    delay = (
+                        strategy.retry_policy.get_delay(attempt)
+                        if strategy.retry_policy
+                        else 1.0
+                    )
                     time.sleep(delay)
                     continue
 

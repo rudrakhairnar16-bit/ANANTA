@@ -133,7 +133,12 @@ class ArtifactStore:
             path=str(artifact_path),
         )
 
-    def get(self, episode_id: str, stage: str, version: int | None = None) -> tuple[dict[str, Any], ArtifactMetadata] | None:
+    def get(
+        self,
+        episode_id: str,
+        stage: str,
+        version: int | None = None,
+    ) -> tuple[dict[str, Any], ArtifactMetadata] | None:
         if version is None:
             versions = [
                 (meta.version, artifact_id) for artifact_id, meta in self._index.items()
@@ -155,7 +160,11 @@ class ArtifactStore:
         data = json.loads(artifact_path.read_text(encoding="utf-8"))
         return data, metadata
 
-    def get_latest(self, episode_id: str, stage: str) -> tuple[dict[str, Any], ArtifactMetadata] | None:
+    def get_latest(
+        self,
+        episode_id: str,
+        stage: str,
+    ) -> tuple[dict[str, Any], ArtifactMetadata] | None:
         return self.get(episode_id, stage, version=None)
 
     def list_artifacts(self, episode_id: str) -> list[ArtifactMetadata]:
@@ -165,10 +174,10 @@ class ArtifactStore:
         ]
 
     def list_stages(self, episode_id: str) -> list[str]:
-        return sorted(set(
+        return sorted({
             meta.stage for meta in self._index.values()
             if meta.name.startswith(f"{episode_id}:")
-        ))
+        })
 
     def delete(self, episode_id: str, stage: str, version: int):
         artifact_id = f"{episode_id}:{stage}:v{version}"

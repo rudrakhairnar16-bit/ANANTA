@@ -1,3 +1,5 @@
+import json
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -719,7 +721,6 @@ class OllamaProviderV2(BaseProviderV2):
             ) from e
 
     def _parse_response(self, response: dict, inputs: dict[str, Any]) -> dict[str, Any]:
-        import json
         raw_output = response.get("response", "").strip()
 
         try:
@@ -731,16 +732,16 @@ class OllamaProviderV2(BaseProviderV2):
             parsed = {"synopsis": raw_output, "themes": [], "acts": 3, "beats": []}
 
         required_fields = ["synopsis", "themes", "acts", "beats"]
-        for field in required_fields:
-            if field not in parsed:
-                if field == "synopsis":
-                    parsed[field] = raw_output or "Generated story synopsis"
-                elif field == "themes":
-                    parsed[field] = []
-                elif field == "acts":
-                    parsed[field] = 3
-                elif field == "beats":
-                    parsed[field] = []
+        for required_field in required_fields:
+            if required_field not in parsed:
+                if required_field == "synopsis":
+                    parsed[required_field] = raw_output or "Generated story synopsis"
+                elif required_field == "themes":
+                    parsed[required_field] = []
+                elif required_field == "acts":
+                    parsed[required_field] = 3
+                elif required_field == "beats":
+                    parsed[required_field] = []
 
         return {
             "episode_id": inputs.get("episode_id", "UNKNOWN"),
@@ -755,7 +756,6 @@ class OllamaProviderV2(BaseProviderV2):
         }
 
     def _extract_json_from_text(self, text: str) -> dict:
-        import re
         json_match = re.search(r"\{.*\}", text, re.DOTALL)
         if json_match:
             try:

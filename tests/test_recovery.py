@@ -36,7 +36,12 @@ def test_retry_policy_default():
 
 
 def test_retry_policy_get_delay():
-    policy = RetryPolicy(base_delay_seconds=1.0, exponential_base=2.0, max_delay_seconds=10.0, jitter=False)
+    policy = RetryPolicy(
+        base_delay_seconds=1.0,
+        exponential_base=2.0,
+        max_delay_seconds=10.0,
+        jitter=False,
+    )
     assert policy.get_delay(0) == 1.0
     assert policy.get_delay(1) == 2.0
     assert policy.get_delay(2) == 4.0
@@ -140,14 +145,20 @@ def test_execute_with_retry_fails_then_succeeds():
             raise ValueError("Temporary error")
         return "success"
 
-    result = execute_with_retry(func, RetryPolicy(max_retries=3, base_delay_seconds=0.01, jitter=False))
+    result = execute_with_retry(
+        func,
+        RetryPolicy(max_retries=3, base_delay_seconds=0.01, jitter=False),
+    )
     assert result == "success"
     assert attempts[0] == 2
 
 
 def test_execute_with_retry_all_fail():
     with pytest.raises(ValueError):
-        execute_with_retry(lambda: (_ for _ in ()).throw(ValueError("Permanent")), RetryPolicy(max_retries=2, base_delay_seconds=0.01, jitter=False))
+        execute_with_retry(
+            lambda: (_ for _ in ()).throw(ValueError("Permanent")),
+            RetryPolicy(max_retries=2, base_delay_seconds=0.01, jitter=False),
+        )
 
 
 def test_stage_recovery_manager():
@@ -185,13 +196,21 @@ def test_stage_recovery_manager_execute_retry_then_success():
 
 def test_stage_recovery_manager_execute_permanent_fail_optional():
     manager = StageRecoveryManager()
-    success, result, error = manager.execute_stage("story", lambda: (_ for _ in ()).throw(ValueError("Not found")), is_optional=True)
+    success, result, error = manager.execute_stage(
+        "story",
+        lambda: (_ for _ in ()).throw(ValueError("Not found")),
+        is_optional=True,
+    )
     assert success is False
     assert "Skipped" in error
 
 
 def test_stage_recovery_manager_execute_permanent_fail_required():
     manager = StageRecoveryManager()
-    success, result, error = manager.execute_stage("story", lambda: (_ for _ in ()).throw(ValueError("Not found")), is_optional=False)
+    success, result, error = manager.execute_stage(
+        "story",
+        lambda: (_ for _ in ()).throw(ValueError("Not found")),
+        is_optional=False,
+    )
     assert success is False
     assert "Aborted" in error

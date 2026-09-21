@@ -50,7 +50,13 @@ def log_context(**kwargs):
             episode_id=kwargs.get("episode_id", current.episode_id),
             stage=kwargs.get("stage", current.stage),
             stage_index=kwargs.get("stage_index", current.stage_index),
-            extra={**current.extra, **{k: v for k, v in kwargs.items() if k not in ["stage", "stage_index", "pipeline_id", "episode_id"]}},
+            extra={
+                **current.extra,
+                **{
+                    k: v for k, v in kwargs.items()
+                    if k not in ["stage", "stage_index", "pipeline_id", "episode_id"]
+                },
+            },
         )
     else:
         new_context = LogContext(**kwargs)
@@ -103,21 +109,49 @@ class StructuredLogger:
 
     def stage_start(self, stage: str, stage_index: int, total_stages: int):
         with log_context(stage=stage, stage_index=stage_index):
-            self.info(f"Starting stage {stage}", stage=stage, stage_index=stage_index, total_stages=total_stages)
+            self.info(
+                f"Starting stage {stage}",
+                stage=stage,
+                stage_index=stage_index,
+                total_stages=total_stages,
+            )
 
     def stage_complete(self, stage: str, stage_index: int, duration_ms: float):
         with log_context(stage=stage, stage_index=stage_index):
-            self.info(f"Completed stage {stage}", stage=stage, stage_index=stage_index, duration_ms=duration_ms)
+            self.info(
+                f"Completed stage {stage}",
+                stage=stage,
+                stage_index=stage_index,
+                duration_ms=duration_ms,
+            )
 
     def stage_failed(self, stage: str, stage_index: int, error: str, duration_ms: float):
         with log_context(stage=stage, stage_index=stage_index):
-            self.error(f"Stage {stage} failed", stage=stage, stage_index=stage_index, error=error, duration_ms=duration_ms)
+            self.error(
+                f"Stage {stage} failed",
+                stage=stage,
+                stage_index=stage_index,
+                error=error,
+                duration_ms=duration_ms,
+            )
 
     def pipeline_start(self, pipeline_id: str, episode_id: str, total_stages: int):
         with log_context(pipeline_id=pipeline_id, episode_id=episode_id, stage_index=0):
-            self.info("Pipeline started", pipeline_id=pipeline_id, episode_id=episode_id, total_stages=total_stages)
+            self.info(
+                "Pipeline started",
+                pipeline_id=pipeline_id,
+                episode_id=episode_id,
+                total_stages=total_stages,
+            )
 
-    def pipeline_complete(self, pipeline_id: str, episode_id: str, duration_ms: float, completed: int, failed: int):
+    def pipeline_complete(
+        self,
+        pipeline_id: str,
+        episode_id: str,
+        duration_ms: float,
+        completed: int,
+        failed: int,
+    ):
         with log_context(pipeline_id=pipeline_id, episode_id=episode_id):
             self.info(
                 "Pipeline completed",
@@ -130,7 +164,13 @@ class StructuredLogger:
 
     def pipeline_failed(self, pipeline_id: str, episode_id: str, error: str, completed: int):
         with log_context(pipeline_id=pipeline_id, episode_id=episode_id):
-            self.error("Pipeline failed", pipeline_id=pipeline_id, episode_id=episode_id, error=error, completed_stages=completed)
+            self.error(
+                "Pipeline failed",
+                pipeline_id=pipeline_id,
+                episode_id=episode_id,
+                error=error,
+                completed_stages=completed,
+            )
 
     def provider_call(self, provider: str, stage: str, success: bool, latency_ms: float, **kwargs):
         with log_context(stage=stage):
@@ -157,6 +197,13 @@ class StructuredLogger:
 
 
 class JsonFormatter(logging.Formatter):
+    _EXCLUDED_KEYS = {
+        "name", "msg", "args", "created", "filename", "funcName", "levelname",
+        "levelno", "lineno", "module", "msecs", "message", "pathname",
+        "process", "processName", "relativeCreated", "thread", "threadName",
+        "timestamp", "context", "exc_info", "exc_text", "stack_info",
+    }
+
     def format(self, record: logging.LogRecord) -> str:
         log_data = {
             "timestamp": getattr(record, "timestamp", datetime.now(timezone.utc).isoformat()),
@@ -172,7 +219,7 @@ class JsonFormatter(logging.Formatter):
             log_data["context"] = record.context
 
         for key, value in record.__dict__.items():
-            if key not in ["name", "msg", "args", "created", "filename", "funcName", "levelname", "levelno", "lineno", "module", "msecs", "message", "name", "pathname", "process", "processName", "relativeCreated", "thread", "threadName", "timestamp", "context", "exc_info", "exc_text", "stack_info"]:
+            if key not in self._EXCLUDED_KEYS:
                 log_data[key] = value
 
         return json.dumps(log_data, ensure_ascii=False)
@@ -193,5 +240,8 @@ def configure_logging(level: int = logging.INFO, json_output: bool = True):
     if json_output:
         handler.setFormatter(JsonFormatter())
     else:
-        handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+        plain_format = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        handler.setFormatter(plain_format)
     root_logger.addHandler(handler)

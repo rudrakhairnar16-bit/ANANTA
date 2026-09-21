@@ -40,8 +40,19 @@ python_functions = ["test_*"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM", "T20"]
 ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+# V1 legacy files intentionally preserved (Phase 1 interface + mock data).
+# pipeline/providers.py must stay byte-identical: long mock strings, single-line
+# exception, and legacy exception name are accepted as-is.
+"pipeline/providers.py" = ["E501", "E701", "N818"]
+# V1 CLI pipelines communicate to the terminal via print() by design.
+"pipeline/episode_pipeline.py" = ["T201"]
+"agents/base_agent.py" = ["T201"]
 
 [tool.ruff.format]
 quote-style = "double"

@@ -126,13 +126,17 @@ class Settings(BaseModel):
         self.ollama.load_from_env()
 
         if os.getenv("PIPELINE_EXECUTION_MODE"):
-            self.pipeline.execution_mode = os.getenv("PIPELINE_EXECUTION_MODE", self.pipeline.execution_mode)
+            self.pipeline.execution_mode = os.getenv(
+                "PIPELINE_EXECUTION_MODE", self.pipeline.execution_mode
+            )
 
         if os.getenv("PIPELINE_MAX_PARALLEL"):
             self.pipeline.max_parallel_stages = int(os.getenv("PIPELINE_MAX_PARALLEL"))
 
         if os.getenv("PIPELINE_CHECKPOINT_ENABLED"):
-            self.pipeline.checkpoint_enabled = os.getenv("PIPELINE_CHECKPOINT_ENABLED").lower() == "true"
+            self.pipeline.checkpoint_enabled = os.getenv(
+                "PIPELINE_CHECKPOINT_ENABLED"
+            ).lower() == "true"
 
         if os.getenv("LOG_LEVEL"):
             self.observability.log_level = os.getenv("LOG_LEVEL")
