@@ -6,6 +6,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pipeline.atomic_io import atomic_write_text
+from pipeline.episode_ids import validate_episode_id
+
 
 @dataclass
 class ArtifactMetadata:
@@ -73,7 +76,16 @@ class ArtifactStore:
     def _save_index(self):
         index_path = self.base_path / "index.json"
         data = {k: v.to_dict() for k, v in self._index.items()}
-        index_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        self._write_bytes_atomic(index_path, json.dumps(data, indent=2))
+
+    def _write_bytes_atomic(self, path: Path, text: str):
+        atomic_write_text(path, text)
+
+    def _write_payload(self, path: Path, data: dict[str, Any]):
+        self._write_bytes_atomic(path, json.dumps(data, indent=2, ensure_ascii=False))
+
+    def _write_metadata(self, path: Path, metadata: "ArtifactMetadata"):
+        self._write_bytes_atomic(path, json.dumps(metadata.to_dict(), indent=2))
 
     def _compute_checksum(self, data: bytes) -> str:
         return hashlib.sha256(data).hexdigest()[:16]
@@ -92,12 +104,13 @@ class ArtifactStore:
         lineage: dict[str, Any] | None = None,
         tags: list[str] | None = None,
     ) -> ArtifactReference:
+        validate_episode_id(episode_id)
         episode_dir = self.base_path / episode_id
         episode_dir.mkdir(parents=True, exist_ok=True)
 
         existing_versions = [
             int(meta.version) for meta in self._index.values()
-            if meta.episode_id == episode_id and meta.stage == stage
+            if meta.stage == stage and meta.name.startswith(f"{episode_id}:")
         ]
 
         version = max(existing_versions, default=0) + 1
@@ -109,7 +122,7 @@ class ArtifactStore:
         artifact_path = self._get_artifact_path(episode_id, stage, version)
         metadata_path = self._get_metadata_path(episode_id, stage, version)
 
-        artifact_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        self._write_payload(artifact_path, data)
 
         metadata = ArtifactMetadata(
             name=artifact_id,
@@ -122,9 +135,13 @@ class ArtifactStore:
             tags=tags or [],
         )
 
-        metadata_path.write_text(json.dumps(metadata.to_dict(), indent=2), encoding="utf-8")
+        self._write_metadata(metadata_path, metadata)
         self._index[artifact_id] = metadata
-        self._save_index()
+        try:
+            self._save_index()
+        except BaseException:
+            self._index.pop(artifact_id, None)
+            raise
 
         return ArtifactReference(
             artifact_id=artifact_id,
@@ -139,6 +156,7 @@ class ArtifactStore:
         stage: str,
         version: int | None = None,
     ) -> tuple[dict[str, Any], ArtifactMetadata] | None:
+        validate_episode_id(episode_id)
         if version is None:
             versions = [
                 (meta.version, artifact_id) for artifact_id, meta in self._index.items()
@@ -180,10 +198,17 @@ class ArtifactStore:
         })
 
     def delete(self, episode_id: str, stage: str, version: int):
+        validate_episode_id(episode_id)
         artifact_id = f"{episode_id}:{stage}:v{version}"
+        removed = None
         if artifact_id in self._index:
-            del self._index[artifact_id]
-            self._save_index()
+            removed = self._index.pop(artifact_id)
+            try:
+                self._save_index()
+            except BaseException:
+                if removed is not None:
+                    self._index[artifact_id] = removed
+                raise
 
         artifact_path = self._get_artifact_path(episode_id, stage, version)
         metadata_path = self._get_metadata_path(episode_id, stage, version)
@@ -194,10 +219,16 @@ class ArtifactStore:
             metadata_path.unlink()
 
     def cleanup_episode(self, episode_id: str):
+        validate_episode_id(episode_id)
+        removed: dict[str, ArtifactMetadata] = {}
         for artifact_id in list(self._index.keys()):
             if artifact_id.startswith(f"{episode_id}:"):
-                del self._index[artifact_id]
-        self._save_index()
+                removed[artifact_id] = self._index.pop(artifact_id)
+        try:
+            self._save_index()
+        except BaseException:
+            self._index.update(removed)
+            raise
 
         episode_dir = self.base_path / episode_id
         if episode_dir.exists():

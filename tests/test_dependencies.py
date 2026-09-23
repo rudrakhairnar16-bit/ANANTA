@@ -1,3 +1,8 @@
+import os
+import pathlib
+import subprocess
+import sys
+
 import pytest
 
 from pipeline.dependencies import (
@@ -6,6 +11,8 @@ from pipeline.dependencies import (
     get_default_dependency_graph,
     get_stage_specs,
 )
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 def test_stage_spec_creation():
@@ -156,3 +163,83 @@ def test_qa_dependencies():
     assert "lipsync" in deps
     assert "sfx" in deps
     assert "bgm" in deps
+
+
+def test_execution_order_deterministic_across_repeated_calls():
+    graph = get_default_dependency_graph()
+    first = graph.get_execution_order()
+    for _ in range(20):
+        assert graph.get_execution_order() == first
+
+
+def test_execution_order_deterministic_across_hash_seeds():
+    script = (
+        "import json;"
+        "from pipeline.dependencies import get_default_dependency_graph;"
+        "print(json.dumps(get_default_dependency_graph().get_execution_order()))"
+    )
+    orders = set()
+    for seed in ("0", "1", "424242"):
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT),
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            check=True,
+        )
+        orders.add(result.stdout.strip())
+    assert len(orders) == 1
+
+
+def _independent_execution_order(stages):
+    adjacency = {s.name: set(s.dependencies) for s in stages}
+    dependents = {name: set() for name in adjacency}
+    for name, deps in adjacency.items():
+        for dep in deps:
+            dependents[dep].add(name)
+    in_degree = {name: len(deps) for name, deps in adjacency.items()}
+    ready = sorted(name for name, degree in in_degree.items() if degree == 0)
+    order = []
+    while ready:
+        node = ready.pop(0)
+        order.append(node)
+        for dependent in sorted(dependents.get(node, set())):
+            in_degree[dependent] -= 1
+            if in_degree[dependent] == 0:
+                ready.append(dependent)
+                ready.sort()
+    return order
+
+
+def test_default_order_matches_independent_oracle():
+    graph = get_default_dependency_graph()
+    oracle = _independent_execution_order(graph.stages.values())
+    assert graph.get_execution_order() == oracle
+
+
+def test_execution_order_sorted_tiebreak_diamond():
+    specs = [
+        StageSpec(name="d", dependencies=["b", "c"]),
+        StageSpec(name="b", dependencies=["a"]),
+        StageSpec(name="c", dependencies=["a"]),
+        StageSpec(name="a", dependencies=[]),
+    ]
+    graph = DependencyGraph(specs)
+    assert graph.get_execution_order() == ["a", "b", "c", "d"]
+
+
+def test_get_dependencies_sorted():
+    graph = get_default_dependency_graph()
+    for stage in graph.stages:
+        assert graph.get_dependencies(stage) == sorted(graph.get_dependencies(stage))
+    assert graph.get_dependencies("qa") == ["adobe_export", "bgm", "lipsync", "sfx"]
+
+
+def test_get_dependents_sorted():
+    graph = get_default_dependency_graph()
+    for stage in graph.stages:
+        assert graph.get_dependents(stage) == sorted(graph.get_dependents(stage))
+    assert graph.get_dependents("screenplay") == sorted(
+        ["scene_plan", "storyboard", "bgm", "sfx"]
+    )

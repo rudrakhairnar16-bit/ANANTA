@@ -5,6 +5,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from pipeline.atomic_io import atomic_write_text
+from pipeline.episode_ids import validate_episode_id
+
 
 class StageStatus(str, Enum):
     PENDING = "pending"
@@ -13,6 +16,61 @@ class StageStatus(str, Enum):
     FAILED = "failed"
     SKIPPED = "skipped"
     RETRYING = "retrying"
+    QUEUED = "queued"
+    BLOCKED = "blocked"
+    CANCELLED = "cancelled"
+
+
+class InvalidStateTransitionError(ValueError):
+    """Raised when a stage status transition is not in VALID_TRANSITIONS."""
+
+
+VALID_TRANSITIONS: dict[StageStatus, frozenset[StageStatus]] = {
+    StageStatus.PENDING: frozenset(
+        {
+            StageStatus.QUEUED,
+            StageStatus.BLOCKED,
+            StageStatus.RUNNING,
+            StageStatus.RETRYING,
+            StageStatus.COMPLETED,
+            StageStatus.FAILED,
+            StageStatus.SKIPPED,
+            StageStatus.CANCELLED,
+        }
+    ),
+    StageStatus.QUEUED: frozenset(
+        {
+            StageStatus.RUNNING,
+            StageStatus.BLOCKED,
+            StageStatus.SKIPPED,
+            StageStatus.FAILED,
+            StageStatus.CANCELLED,
+        }
+    ),
+    StageStatus.BLOCKED: frozenset(
+        {
+            StageStatus.QUEUED,
+            StageStatus.SKIPPED,
+            StageStatus.FAILED,
+            StageStatus.CANCELLED,
+        }
+    ),
+    StageStatus.RUNNING: frozenset(
+        {
+            StageStatus.COMPLETED,
+            StageStatus.FAILED,
+            StageStatus.RETRYING,
+            StageStatus.CANCELLED,
+        }
+    ),
+    StageStatus.RETRYING: frozenset(
+        {StageStatus.RUNNING, StageStatus.FAILED, StageStatus.CANCELLED, StageStatus.QUEUED}
+    ),
+    StageStatus.COMPLETED: frozenset(),
+    StageStatus.FAILED: frozenset(),
+    StageStatus.SKIPPED: frozenset(),
+    StageStatus.CANCELLED: frozenset(),
+}
 
 
 @dataclass
@@ -26,27 +84,40 @@ class StageState:
     output_path: str | None = None
     metrics: dict[str, Any] | None = None
 
+    def transition(self, new_status: StageStatus):
+        if not isinstance(new_status, StageStatus):
+            raise InvalidStateTransitionError(
+                f"{new_status!r} is not a valid stage status"
+            )
+        allowed = VALID_TRANSITIONS.get(self.status, frozenset())
+        if new_status not in allowed:
+            raise InvalidStateTransitionError(
+                "Illegal stage transition for stage "
+                f"'{self.stage}': '{self.status.value}' -> '{new_status.value}'"
+            )
+        self.status = new_status
+
     def mark_running(self):
-        self.status = StageStatus.RUNNING
+        self.transition(StageStatus.RUNNING)
         self.started_at = datetime.now(timezone.utc).isoformat()
 
     def mark_completed(self, output_path: str | None = None, metrics: dict[str, Any] | None = None):
-        self.status = StageStatus.COMPLETED
+        self.transition(StageStatus.COMPLETED)
         self.completed_at = datetime.now(timezone.utc).isoformat()
         self.output_path = output_path
         self.metrics = metrics
 
     def mark_failed(self, error: str):
-        self.status = StageStatus.FAILED
+        self.transition(StageStatus.FAILED)
         self.completed_at = datetime.now(timezone.utc).isoformat()
         self.error = error
 
     def mark_skipped(self):
-        self.status = StageStatus.SKIPPED
+        self.transition(StageStatus.SKIPPED)
         self.completed_at = datetime.now(timezone.utc).isoformat()
 
     def mark_retrying(self):
-        self.status = StageStatus.RETRYING
+        self.transition(StageStatus.RETRYING)
         self.retry_count += 1
 
     def to_dict(self) -> dict[str, Any]:
@@ -178,10 +249,12 @@ class StateStore:
         return self.base_path / f"{episode_id}_state.json"
 
     def save(self, state: PipelineState):
+        validate_episode_id(state.episode_id)
         path = self._get_state_path(state.episode_id)
-        path.write_text(json.dumps(state.to_dict(), indent=2), encoding="utf-8")
+        atomic_write_text(path, json.dumps(state.to_dict(), indent=2))
 
     def load(self, episode_id: str) -> PipelineState | None:
+        validate_episode_id(episode_id)
         path = self._get_state_path(episode_id)
         if not path.exists():
             return None
@@ -189,6 +262,7 @@ class StateStore:
         return PipelineState.from_dict(data)
 
     def delete(self, episode_id: str):
+        validate_episode_id(episode_id)
         path = self._get_state_path(episode_id)
         if path.exists():
             path.unlink()

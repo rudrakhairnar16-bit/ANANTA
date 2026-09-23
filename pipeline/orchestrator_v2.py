@@ -13,6 +13,7 @@ from config_v2 import get_settings
 from observability.logging import get_logger, log_context
 from pipeline.artifacts import ArtifactManager
 from pipeline.dependencies import get_default_dependency_graph
+from pipeline.episode_ids import validate_episode_id
 from pipeline.recovery import StageRecoveryManager
 from pipeline.state import (
     CheckpointManager,
@@ -71,6 +72,7 @@ class PipelineOrchestratorV2:
     def run(self, brief_path: str, resume: bool = False) -> dict[str, Any]:
         brief = json.loads(pathlib.Path(brief_path).read_text(encoding="utf-8"))
         episode_id = brief.get("episode_id", "UNKNOWN")
+        validate_episode_id(episode_id)
         pipeline_id = str(uuid.uuid4())[:8]
 
         brief["generated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -89,6 +91,9 @@ class PipelineOrchestratorV2:
                 pipeline_state.status = "running"
             else:
                 pipeline_state.status = "running"
+                for stage in self.stages:
+                    if pipeline_state.get_stage(stage) is None:
+                        pipeline_state.add_stage(stage)
 
             context = ExecutionContext(
                 pipeline_id=pipeline_id,
@@ -157,6 +162,7 @@ class PipelineOrchestratorV2:
 
             if stage_state and stage_state.status == StageStatus.COMPLETED:
                 context.completed_stages.append(stage)
+                current_data = self._hydrate_completed_stage(context, stage, current_data)
                 continue
 
             if stage_state and stage_state.status == StageStatus.FAILED:
@@ -172,7 +178,7 @@ class PipelineOrchestratorV2:
                 total_stages=len(self.stages),
             )
 
-            agent = get_agent_v2(stage)
+            agent = get_agent_v2(stage, artifact_manager=self.artifact_manager)
 
             try:
                 current_data = agent.run(
@@ -192,7 +198,7 @@ class PipelineOrchestratorV2:
 
             except Exception as e:
                 context.failed_stages.append({"stage": stage, "error": str(e)})
-                if stage_state:
+                if stage_state and stage_state.status != StageStatus.FAILED:
                     stage_state.mark_failed(str(e))
                     pipeline_state.update_stage(stage_state)
                 if self.settings.pipeline.checkpoint_enabled:
@@ -201,6 +207,45 @@ class PipelineOrchestratorV2:
 
         context.pipeline_state = pipeline_state
         return current_data
+
+    def _hydrate_completed_stage(
+        self,
+        context: ExecutionContext,
+        stage: str,
+        current_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        artifact = self.artifact_manager.get_latest_artifact(context.episode_id, stage)
+        if artifact is None:
+            raise RuntimeError(
+                f"Completed stage '{stage}' for episode '{context.episode_id}' "
+                "has no stored artifact; cannot resume safely"
+            )
+        return self._merge_stage_result(current_data, artifact)
+
+    def _merge_stage_result(
+        self,
+        inputs: dict[str, Any],
+        result_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        merged = {**inputs, **result_data}
+        if (
+            isinstance(inputs.get("outputs"), dict)
+            and isinstance(result_data.get("outputs"), dict)
+        ):
+            merged["outputs"] = {**inputs["outputs"], **result_data["outputs"]}
+        stage_inputs = result_data.get("inputs")
+        if isinstance(stage_inputs, dict):
+            for key in [
+                "characters",
+                "locations",
+                "scenes",
+                "title",
+                "logline",
+                "duration_seconds",
+            ]:
+                if key in stage_inputs and key not in merged:
+                    merged[key] = stage_inputs[key]
+        return merged
 
     def _create_summary(self, context: ExecutionContext) -> dict[str, Any]:
         return {

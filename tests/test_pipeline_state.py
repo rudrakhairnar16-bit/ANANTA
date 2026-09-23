@@ -1,5 +1,8 @@
+import pytest
+
 from pipeline.state import (
     CheckpointManager,
+    InvalidStateTransitionError,
     PipelineState,
     StageState,
     StageStatus,
@@ -280,3 +283,89 @@ def test_create_initial_state():
     assert state.total_stages == 2
     assert "story" in state.stages
     assert "screenplay" in state.stages
+
+
+def test_stage_status_has_scheduler_states():
+    values = {s.value for s in StageStatus}
+    assert {
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "skipped",
+        "retrying",
+        "queued",
+        "blocked",
+        "cancelled",
+    } <= values
+
+
+def test_stage_state_transition_queued_running_completed():
+    state = StageState(stage="story")
+    state.transition(StageStatus.QUEUED)
+    assert state.status == StageStatus.QUEUED
+    state.transition(StageStatus.RUNNING)
+    assert state.status == StageStatus.RUNNING
+    state.transition(StageStatus.COMPLETED)
+    assert state.status == StageStatus.COMPLETED
+
+
+def test_stage_state_transition_blocked_then_queued():
+    state = StageState(stage="story")
+    state.transition(StageStatus.BLOCKED)
+    assert state.status == StageStatus.BLOCKED
+    state.transition(StageStatus.QUEUED)
+    assert state.status == StageStatus.QUEUED
+
+
+def test_stage_state_transition_pending_to_completed_legacy():
+    state = StageState(stage="story")
+    state.mark_completed()
+    assert state.status == StageStatus.COMPLETED
+
+
+@pytest.mark.parametrize(
+    "sequence",
+    [
+        [StageStatus.QUEUED, StageStatus.COMPLETED],
+        [StageStatus.COMPLETED, StageStatus.RUNNING],
+        [StageStatus.FAILED, StageStatus.COMPLETED],
+        [StageStatus.SKIPPED, StageStatus.RUNNING],
+        [StageStatus.CANCELLED, StageStatus.RUNNING],
+        [StageStatus.BLOCKED, StageStatus.RUNNING],
+        [StageStatus.RUNNING, StageStatus.RUNNING],
+        [StageStatus.QUEUED, StageStatus.QUEUED],
+    ],
+)
+def test_stage_state_invalid_transitions_rejected(sequence):
+    state = StageState(stage="story")
+    for status in sequence[:-1]:
+        state.transition(status)
+    with pytest.raises(InvalidStateTransitionError):
+        state.transition(sequence[-1])
+
+
+def test_stage_state_rejects_self_transition_from_pending():
+    state = StageState(stage="story")
+    with pytest.raises(InvalidStateTransitionError):
+        state.transition(StageStatus.PENDING)
+
+
+def test_stage_state_invalid_transition_via_mark_methods():
+    state = StageState(stage="story")
+    state.mark_completed()
+    with pytest.raises(InvalidStateTransitionError):
+        state.mark_failed("Too late")
+
+
+def test_stage_state_mark_retrying_then_running():
+    state = StageState(stage="story")
+    state.mark_retrying()
+    assert state.status == StageStatus.RETRYING
+    assert state.retry_count == 1
+    state.mark_running()
+    assert state.status == StageStatus.RUNNING
+
+
+def test_invalid_state_transition_is_value_error():
+    assert issubclass(InvalidStateTransitionError, ValueError)

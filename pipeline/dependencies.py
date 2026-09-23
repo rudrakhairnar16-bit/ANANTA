@@ -1,5 +1,6 @@
-from collections import defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass, field
+from heapq import heapify, heappop, heappush
 
 
 @dataclass
@@ -29,23 +30,26 @@ class DependencyGraph:
             self._reverse_adjacency[spec.name].add(dep)
 
     def get_dependencies(self, stage: str) -> list[str]:
-        return list(self._reverse_adjacency.get(stage, set()))
+        return sorted(self._reverse_adjacency.get(stage, set()))
 
     def get_dependents(self, stage: str) -> list[str]:
-        return list(self._adjacency.get(stage, set()))
+        return sorted(self._adjacency.get(stage, set()))
 
     def get_execution_order(self) -> list[str]:
-        in_degree = {name: len(self._reverse_adjacency.get(name, set())) for name in self.stages}
-        queue = deque([name for name, degree in in_degree.items() if degree == 0])
+        in_degree = {
+            name: len(self._reverse_adjacency.get(name, set())) for name in self.stages
+        }
+        queue = [name for name, degree in in_degree.items() if degree == 0]
+        heapify(queue)
         order = []
 
         while queue:
-            node = queue.popleft()
+            node = heappop(queue)
             order.append(node)
-            for dependent in self._adjacency.get(node, set()):
+            for dependent in sorted(self._adjacency.get(node, set())):
                 in_degree[dependent] -= 1
                 if in_degree[dependent] == 0:
-                    queue.append(dependent)
+                    heappush(queue, dependent)
 
         if len(order) != len(self.stages):
             raise ValueError("Cycle detected in dependency graph")
