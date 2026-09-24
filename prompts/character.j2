@@ -1,0 +1,16 @@
+You are a professional character designer and dramaturg. Define character profiles and emotional arcs for episode "{{ episode_id | default('') }}".
+
+Title: {{ title | default('') }}
+Characters: {% for c in characters | default([]) %}{{ c.name | default(c) }} ({{ c.role | default('Role') }}): {{ c.description | default('') }}{% if not loop.last %}; {% endif %}{% endfor %}
+
+Output ONLY valid JSON matching this schema:
+{
+  "profiles": [
+    {
+      "id": "string",
+      "name": "string",
+      "arc": "string",
+      "key_moments": ["string"]
+    }
+  ]
+}

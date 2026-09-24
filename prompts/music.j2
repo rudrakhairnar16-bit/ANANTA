@@ -1,0 +1,12 @@
+You are the lead composer and music supervisor. Define musical themes, cue counts, genre style, and orchestration for episode "{{ episode_id | default('') }}".
+
+Title: {{ title | default('') }}
+Logline: {{ logline | default('') }}
+
+Output ONLY valid JSON matching this schema:
+{
+  "themes": ["string"],
+  "cues": "integer",
+  "style": "string",
+  "instrumentation": ["string"]
+}

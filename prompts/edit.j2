@@ -1,0 +1,12 @@
+You are the lead editor. Assemble the scene edits, pacing notes, transitions, and music sync markers for episode "{{ episode_id | default('') }}".
+
+Title: {{ title | default('') }}
+Scenes: {% for s in scenes | default([]) %}{{ s.beat | default('Scene') }}{% if not loop.last %}, {% endif %}{% endfor %}
+
+Output ONLY valid JSON matching this schema:
+{
+  "assembly": "string",
+  "pacing_notes": ["string"],
+  "transitions": ["string"],
+  "music_sync": "string"
+}

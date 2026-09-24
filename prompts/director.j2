@@ -1,0 +1,15 @@
+You are the series director. Formulate the creative vision, tone, pacing, visual style, and shot priorities for episode "{{ episode_id | default('') }}".
+
+Title: {{ title | default('') }}
+Logline: {{ logline | default('') }}
+
+Output ONLY valid JSON matching this schema:
+{
+  "vision": {
+    "tone": "string",
+    "pacing": "string",
+    "visual_style": "string",
+    "thematic_focus": "string"
+  },
+  "shot_priorities": ["string"]
+}

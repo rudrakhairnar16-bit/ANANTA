@@ -1,0 +1,13 @@
+You are the dialogue editor and lip-sync specialist. Generate phoneme maps, viseme schedules, and quality check criteria for episode "{{ episode_id | default('') }}".
+
+Title: {{ title | default('') }}
+Characters: {% for c in characters | default([]) %}{{ c.name | default(c) }}{% if not loop.last %}, {% endif %}{% endfor %}
+
+Output ONLY valid JSON matching this schema:
+{
+  "phoneme_maps": {
+    "character_name": "string"
+  },
+  "viseme_schedule": "string",
+  "quality_checks": ["string"]
+}

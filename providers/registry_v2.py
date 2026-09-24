@@ -33,23 +33,57 @@ class ProviderRegistryConfig:
 
         stages = {}
         for stage in settings.pipeline.stages:
-            if stage == "story" and ollama.enabled:
+            stage_settings = settings.get_stage_settings(stage)
+            provider_type = (
+                stage_settings.provider.type
+                if stage_settings and stage_settings.provider
+                else "mock"
+            )
+
+            if provider_type == "ollama" or (stage == "story" and ollama.enabled):
+                prov_timeout = (
+                    stage_settings.provider.timeout
+                    if stage_settings and stage_settings.provider
+                    else ollama.timeout
+                )
+                prov_retries = (
+                    stage_settings.provider.max_retries
+                    if stage_settings and stage_settings.provider
+                    else ollama.max_retries
+                )
+                prov_temp = (
+                    stage_settings.provider.temperature
+                    if stage_settings and stage_settings.provider
+                    else ollama.temperature
+                )
+                prov_extra = {
+                    "base_url": (
+                        stage_settings.provider.extra.get("base_url", ollama.base_url)
+                        if stage_settings and stage_settings.provider
+                        else ollama.base_url
+                    ),
+                    "model": (
+                        stage_settings.provider.extra.get("model", ollama.model or "llama3.1")
+                        if stage_settings and stage_settings.provider
+                        else (ollama.model or "llama3.1")
+                    ),
+                }
                 stages[stage] = StageProviderConfig(
                     stage=stage,
                     provider_type="ollama",
                     provider_config=ProviderConfig(
-                        name="OllamaProvider",
-                        timeout=ollama.timeout,
-                        max_retries=ollama.max_retries,
-                        temperature=ollama.temperature,
-                        extra={"base_url": ollama.base_url, "model": ollama.model},
+                        name=f"OllamaProvider_{stage}",
+                        timeout=prov_timeout,
+                        max_retries=prov_retries,
+                        temperature=prov_temp,
+                        extra=prov_extra,
                     ),
                     fallback_provider_type="mock",
                 )
             else:
                 stages[stage] = StageProviderConfig(
                     stage=stage,
-                    provider_type="mock",
+                    provider_type=provider_type,
                     provider_config=ProviderConfig(name=f"MockProvider_{stage}"),
                 )
 
@@ -68,7 +102,12 @@ class ProviderRegistry:
             return self._providers[stage]
 
         stage_config = self.config.stages.get(stage)
-        if not stage_config or not stage_config.enabled:
+        if not stage_config:
+            provider = MockProviderV2(stage)
+            self._providers[stage] = provider
+            return provider
+
+        if not stage_config.enabled:
             provider = MockProviderV2(stage)
             self._providers[stage] = provider
             return provider
@@ -79,31 +118,48 @@ class ProviderRegistry:
 
     def _create_provider(self, stage_config: StageProviderConfig) -> BaseProviderV2:
         if stage_config.provider_type == "ollama":
-            if stage_config.provider_config:
-                extra = stage_config.provider_config.extra
-                return OllamaProviderV2(
-                    base_url=extra.get("base_url", "http://localhost:11434"),
-                    model=extra.get("model", "llama3.1"),
-                    timeout=stage_config.provider_config.timeout,
-                    max_retries=stage_config.provider_config.max_retries,
-                    temperature=stage_config.provider_config.temperature,
-                )
+            cfg = stage_config.provider_config
+            extra = cfg.extra if cfg else {}
+            timeout = cfg.timeout if cfg else 120.0
+            max_retries = cfg.max_retries if cfg else 3
+            temperature = cfg.temperature if cfg else 0.7
+            return OllamaProviderV2(
+                base_url=extra.get("base_url", "http://localhost:11434"),
+                model=extra.get("model", "llama3.1"),
+                timeout=timeout,
+                max_retries=max_retries,
+                temperature=temperature,
+                stage=stage_config.stage,
+            )
         elif stage_config.provider_type == "mock":
             return MockProviderV2(stage_config.stage)
 
-        return MockProviderV2(stage_config.stage)
+        raise ValueError(
+            f"Unsupported provider type: '{stage_config.provider_type}' "
+            f"for stage '{stage_config.stage}'"
+        )
 
     def get_provider_for_stage(self, stage: str, use_ollama: bool = False) -> BaseProviderV2:
-        if use_ollama and stage == "story":
-            ollama_config = self.config.stages.get("story")
+        if use_ollama:
+            ollama_config = self.config.stages.get(stage)
             if ollama_config and ollama_config.provider_type == "ollama":
                 return self._create_provider(ollama_config)
+            settings = get_settings()
+            if settings.ollama.enabled:
+                return OllamaProviderV2(
+                    base_url=settings.ollama.base_url,
+                    model=settings.ollama.model,
+                    timeout=settings.ollama.timeout,
+                    max_retries=settings.ollama.max_retries,
+                    temperature=settings.ollama.temperature,
+                    stage=stage,
+                )
         return self.get_provider(stage)
 
     def get_mock_provider(self, stage: str) -> MockProviderV2:
         return MockProviderV2(stage)
 
-    def create_ollama_provider(self) -> OllamaProviderV2:
+    def create_ollama_provider(self, stage: str | None = None) -> OllamaProviderV2:
         settings = get_settings()
         ollama = settings.ollama
         if not ollama.enabled:
@@ -114,6 +170,7 @@ class ProviderRegistry:
             timeout=ollama.timeout,
             max_retries=ollama.max_retries,
             temperature=ollama.temperature,
+            stage=stage,
         )
 
     def health_check(self, stage: str | None = None) -> dict[str, bool]:

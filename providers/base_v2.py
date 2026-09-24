@@ -3,6 +3,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -622,9 +623,11 @@ class OllamaProviderV2(BaseProviderV2):
         timeout: float = 120.0,
         max_retries: int = 3,
         temperature: float = 0.7,
+        stage: str | None = None,
+        prompts_dir: str | Path | None = None,
     ):
         config = ProviderConfig(
-            name="OllamaProvider",
+            name=f"OllamaProvider_{stage}" if stage else "OllamaProvider",
             timeout=timeout,
             max_retries=max_retries,
             temperature=temperature,
@@ -633,6 +636,10 @@ class OllamaProviderV2(BaseProviderV2):
         super().__init__(config)
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.stage = stage
+        self.prompts_dir = (
+            Path(prompts_dir) if prompts_dir else Path(__file__).parent.parent / "prompts"
+        )
         self._client: httpx.Client | None = None
 
     @property
@@ -675,13 +682,18 @@ class OllamaProviderV2(BaseProviderV2):
             )
 
     def _render_prompt(self, inputs: dict[str, Any]) -> str:
-        from pathlib import Path
+        import jinja2
 
-        from jinja2 import Environment, FileSystemLoader
-
-        prompts_dir = Path(__file__).parent.parent / "prompts"
-        env = Environment(loader=FileSystemLoader(str(prompts_dir)))
-        template = env.get_template("story.j2")
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(self.prompts_dir)))
+        target_stage = self.stage or inputs.get("stage", "story")
+        template_name = f"{target_stage}.j2"
+        try:
+            template = env.get_template(template_name)
+        except jinja2.TemplateNotFound as e:
+            raise FileNotFoundError(
+                f"Prompt template '{template_name}' not found for stage "
+                f"'{target_stage}' in {self.prompts_dir}"
+            ) from e
         return template.render(**inputs)
 
     def _call_ollama(self, prompt: str) -> dict:

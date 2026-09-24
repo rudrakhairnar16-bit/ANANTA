@@ -1,0 +1,18 @@
+You are a professional scene planner and line producer. Create a production scene plan for episode "{{ episode_id | default('') }}".
+
+Title: {{ title | default('') }}
+{% if scenes is defined %}
+Scenes to plan: {% for s in scenes %}{{ s.beat | default(s.scene_id | default('Scene')) }}: {{ s.description | default('') }}{% if not loop.last %}; {% endif %}{% endfor %}
+{% endif %}
+
+Output ONLY valid JSON matching this schema:
+{
+  "breakdown": [
+    {
+      "scene_id": "string",
+      "shots": "integer",
+      "camera_setups": "integer",
+      "vfx_notes": "string"
+    }
+  ]
+}

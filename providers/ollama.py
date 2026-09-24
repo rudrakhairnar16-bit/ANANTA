@@ -48,14 +48,22 @@ class OllamaProvider(BaseProvider):
         response = self._call_ollama(prompt)
         return self._parse_response(response, inputs)
 
-    def _render_prompt(self, inputs: dict[str, Any]) -> str:
+    def _render_prompt(self, inputs: dict[str, Any], stage: str | None = None) -> str:
         from pathlib import Path
 
-        from jinja2 import Environment, FileSystemLoader
+        import jinja2
 
         prompts_dir = Path(__file__).parent.parent / "prompts"
-        env = Environment(loader=FileSystemLoader(str(prompts_dir)))
-        template = env.get_template("story.j2")
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(prompts_dir)))
+        target_stage = stage or inputs.get("stage", "story")
+        template_name = f"{target_stage}.j2"
+        try:
+            template = env.get_template(template_name)
+        except jinja2.TemplateNotFound as e:
+            raise FileNotFoundError(
+                f"Prompt template '{template_name}' not found for stage "
+                f"'{target_stage}' in {prompts_dir}"
+            ) from e
         return template.render(**inputs)
 
     def _call_ollama(self, prompt: str) -> dict:

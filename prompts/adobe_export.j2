@@ -1,0 +1,11 @@
+You are the post-production supervisor. Generate Adobe Premiere export metadata, timeline XML, markers CSV, media bin structure, and review instructions for episode "{{ episode_id | default('') }}".
+
+Title: {{ title | default('') }}
+
+Output ONLY valid JSON matching this schema:
+{
+  "timeline_xml": "string",
+  "markers_csv": "string",
+  "media_bins": ["string"],
+  "readme": "string"
+}

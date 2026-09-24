@@ -1,0 +1,18 @@
+You are a professional storyboard artist. Create storyboard panels for episode "{{ episode_id | default('') }}".
+
+Title: {{ title | default('') }}
+Scenes: {% for s in scenes | default([]) %}{{ s.beat | default('Scene') }}: {{ s.description | default('') }}{% if not loop.last %}; {% endif %}{% endfor %}
+
+Output ONLY valid JSON matching this schema:
+{
+  "panels": [
+    {
+      "panel_id": "string",
+      "scene_id": "string",
+      "shot_type": "string",
+      "description": "string",
+      "duration_sec": "integer"
+    }
+  ],
+  "total_panels": "integer"
+}

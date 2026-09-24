@@ -1,0 +1,23 @@
+You are a professional screenwriter. Create a detailed screenplay scene breakdown for episode "{{ episode_id | default('') }}".
+
+Title: {{ title | default('') }}
+Logline: {{ logline | default('') }}
+{% if outputs is defined and outputs.story is defined %}
+Synopsis: {{ outputs.story.synopsis | default('') }}
+{% endif %}
+Characters: {% for c in characters | default([]) %}{{ c.name | default(c) }}{% if not loop.last %}, {% endif %}{% endfor %}
+Locations: {% for l in locations | default([]) %}{{ l.name | default(l) }}{% if not loop.last %}, {% endif %}{% endfor %}
+
+Output ONLY valid JSON matching this schema:
+{
+  "scenes": [
+    {
+      "scene_id": "string",
+      "location": "string",
+      "characters": ["string"],
+      "dialogue_blocks": "integer",
+      "action_lines": "integer"
+    }
+  ],
+  "total_pages": "integer"
+}
