@@ -1,5 +1,8 @@
+import pytest
+
 from providers.base_v2 import (
     MockProviderV2,
+    OllamaProviderV2,
     ProviderConfig,
     ProviderError,
     ProviderMetrics,
@@ -183,11 +186,7 @@ def test_ollama_provider_parse_response_valid_json():
 
 
 def test_ollama_provider_parse_response_non_json():
-    from providers.base_v2 import OllamaProviderV2
-
     provider = OllamaProviderV2()
     response = {"response": "This is plain text without any JSON"}
-    result = provider._parse_response(response, {"episode_id": "TEST"})
-    assert result["outputs"]["synopsis"] == "This is plain text without any JSON"
-    assert result["outputs"]["themes"] == []
-    assert result["outputs"]["acts"] == 3
+    with pytest.raises(ProviderValidationError):
+        provider._parse_response(response, {"episode_id": "TEST"})

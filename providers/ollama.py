@@ -1,9 +1,15 @@
 import json
+import re
 from typing import Any
 
 import httpx
 
-from providers.base import BaseProvider, ProviderTimeoutError, ProviderUnavailableError
+from providers.base import (
+    BaseProvider,
+    ProviderTimeoutError,
+    ProviderUnavailableError,
+    ProviderValidationError,
+)
 
 
 class OllamaProvider(BaseProvider):
@@ -104,31 +110,25 @@ class OllamaProvider(BaseProvider):
 
     def _parse_response(self, response: dict, inputs: dict[str, Any]) -> dict[str, Any]:
         raw_output = response.get("response", "").strip()
+        target_stage = inputs.get("stage", "story")
 
+        parsed = None
         try:
             parsed = json.loads(raw_output)
         except json.JSONDecodeError:
             parsed = self._extract_json_from_text(raw_output)
 
-        if not isinstance(parsed, dict):
-            parsed = {"synopsis": raw_output, "themes": [], "acts": 3, "beats": []}
-
-        required_fields = ["synopsis", "themes", "acts", "beats"]
-        for field in required_fields:
-            if field not in parsed:
-                if field == "synopsis":
-                    parsed[field] = raw_output or "Generated story synopsis"
-                elif field == "themes":
-                    parsed[field] = []
-                elif field == "acts":
-                    parsed[field] = 3
-                elif field == "beats":
-                    parsed[field] = []
+        if not isinstance(parsed, dict) or not parsed:
+            err_msg = (
+                f"Failed to parse structured JSON response for stage '{target_stage}': "
+                f"{raw_output[:200]}"
+            )
+            raise ProviderValidationError(err_msg)
 
         return {
             "episode_id": inputs.get("episode_id", "UNKNOWN"),
-            "stage": "story",
-            "version": 1,
+            "stage": target_stage,
+            "version": inputs.get("version", 1),
             "generated_at": self._get_timestamp(),
             "inputs": inputs,
             "outputs": parsed,
@@ -137,15 +137,25 @@ class OllamaProvider(BaseProvider):
             "approval_status": "pending"
         }
 
-    def _extract_json_from_text(self, text: str) -> dict:
-        import re
-        json_match = re.search(r'\{.*\}', text, re.DOTALL)
-        if json_match:
+    def _extract_json_from_text(self, text: str) -> dict | None:
+        fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.DOTALL)
+        if fence_match:
             try:
-                return json.loads(json_match.group())
+                candidate = json.loads(fence_match.group(1).strip())
+                if isinstance(candidate, dict):
+                    return candidate
             except json.JSONDecodeError:
                 pass
-        return {}
+
+        json_match = re.search(r"\{[\s\S]*\}", text)
+        if json_match:
+            try:
+                candidate = json.loads(json_match.group())
+                if isinstance(candidate, dict):
+                    return candidate
+            except json.JSONDecodeError:
+                pass
+        return None
 
     def _get_timestamp(self) -> str:
         import datetime

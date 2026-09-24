@@ -17,6 +17,10 @@ class ProviderTimeoutError(ProviderError):
     pass
 
 
+class ProviderValidationError(ProviderError):
+    pass
+
+
 class BaseProvider(ABC):
     def __init__(self, name: str):
         self.name = name

@@ -672,7 +672,7 @@ class OllamaProviderV2(BaseProviderV2):
                 provider_name=self.config.name,
                 metrics=self.metrics,
             )
-        except (ProviderUnavailableError, ProviderTimeoutError) as e:
+        except (ProviderUnavailableError, ProviderTimeoutError, ProviderValidationError) as e:
             latency_ms = (time.perf_counter() - start) * 1000
             self.metrics.record_error(str(e))
             return ProviderResponse.error_response(
@@ -734,31 +734,25 @@ class OllamaProviderV2(BaseProviderV2):
 
     def _parse_response(self, response: dict, inputs: dict[str, Any]) -> dict[str, Any]:
         raw_output = response.get("response", "").strip()
+        target_stage = self.stage or inputs.get("stage", "story")
 
+        parsed = None
         try:
             parsed = json.loads(raw_output)
         except json.JSONDecodeError:
             parsed = self._extract_json_from_text(raw_output)
 
-        if not isinstance(parsed, dict):
-            parsed = {"synopsis": raw_output, "themes": [], "acts": 3, "beats": []}
-
-        required_fields = ["synopsis", "themes", "acts", "beats"]
-        for required_field in required_fields:
-            if required_field not in parsed:
-                if required_field == "synopsis":
-                    parsed[required_field] = raw_output or "Generated story synopsis"
-                elif required_field == "themes":
-                    parsed[required_field] = []
-                elif required_field == "acts":
-                    parsed[required_field] = 3
-                elif required_field == "beats":
-                    parsed[required_field] = []
+        if not isinstance(parsed, dict) or not parsed:
+            err_msg = (
+                f"Failed to parse structured JSON response for stage '{target_stage}': "
+                f"{raw_output[:200]}"
+            )
+            raise ProviderValidationError(err_msg)
 
         return {
             "episode_id": inputs.get("episode_id", "UNKNOWN"),
-            "stage": "story",
-            "version": 1,
+            "stage": target_stage,
+            "version": inputs.get("version", 1),
             "generated_at": self._get_timestamp(),
             "inputs": inputs,
             "outputs": parsed,
@@ -768,10 +762,21 @@ class OllamaProviderV2(BaseProviderV2):
         }
 
     def _extract_json_from_text(self, text: str) -> dict:
-        json_match = re.search(r"\{.*\}", text, re.DOTALL)
+        fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.DOTALL)
+        if fence_match:
+            try:
+                candidate = json.loads(fence_match.group(1).strip())
+                if isinstance(candidate, dict):
+                    return candidate
+            except json.JSONDecodeError:
+                pass
+
+        json_match = re.search(r"\{[\s\S]*\}", text)
         if json_match:
             try:
-                return json.loads(json_match.group())
+                candidate = json.loads(json_match.group())
+                if isinstance(candidate, dict):
+                    return candidate
             except json.JSONDecodeError:
                 pass
         return {}

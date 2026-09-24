@@ -380,7 +380,7 @@ class TestBackoffDoesNotOccupyWorker:
 
         assert _wait_until(lambda: scheduler.status("A").name == "RETRYING")
         assert _wait_until(lambda: b_done.is_set())
-        assert scheduler.status("B").name == "COMPLETED"
+        assert _wait_until(lambda: scheduler.status("B").name == "COMPLETED")
         assert executor.active_worker_count() == 0, "worker slot held during backoff"
 
         clock.advance(31.0)

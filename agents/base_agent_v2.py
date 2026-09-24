@@ -151,10 +151,19 @@ class BaseAgentV2:
             validation_result = self.validator.validate_output(self.stage, result_data)
             if not validation_result.valid:
                 error_messages = "; ".join(e.message for e in validation_result.errors)
-                self.logger.warning(
-                    f"Output validation failed for {self.stage}",
-                    stage=self.stage,
-                    validation_errors=error_messages,
+                self.logger.stage_failed(
+                    self.stage,
+                    0,
+                    f"Output validation failed: {error_messages}",
+                    duration_ms,
+                )
+                if pipeline_state:
+                    stage_state = pipeline_state.get_stage(self.stage)
+                    if stage_state:
+                        stage_state.mark_failed(f"Output validation failed: {error_messages}")
+                        pipeline_state.update_stage(stage_state)
+                raise ValueError(
+                    f"Output validation failed for stage '{self.stage}': {error_messages}"
                 )
 
             if pipeline_state:
