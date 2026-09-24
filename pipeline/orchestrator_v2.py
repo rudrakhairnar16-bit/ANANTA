@@ -87,9 +87,16 @@ class PipelineOrchestratorV2:
         self.logger = get_logger("pipeline.orchestrator")
 
     def run(
-        self, brief_path: str, resume: bool = False, retry_failed: bool = False
+        self,
+        brief_path_or_dict: str | pathlib.Path | dict[str, Any],
+        resume: bool = False,
+        retry_failed: bool = False,
     ) -> dict[str, Any]:
-        brief = json.loads(pathlib.Path(brief_path).read_text(encoding="utf-8"))
+        if isinstance(brief_path_or_dict, (str, pathlib.Path)):
+            brief = json.loads(pathlib.Path(brief_path_or_dict).read_text(encoding="utf-8"))
+        else:
+            import copy
+            brief = copy.deepcopy(brief_path_or_dict)
         episode_id = brief.get("episode_id", "UNKNOWN")
         validate_episode_id(episode_id)
         pipeline_id = str(uuid.uuid4())[:8]
@@ -248,7 +255,12 @@ class PipelineOrchestratorV2:
                 stage_state.mark_running()
                 pipeline_state.update_stage(stage_state)
 
-            agent = get_agent_v2(stage, artifact_manager=self.artifact_manager)
+            agent = get_agent_v2(
+                stage,
+                artifact_manager=self.artifact_manager,
+                validator=self.validator,
+                recovery_manager=self.recovery_manager,
+            )
 
             try:
                 current_data = agent.run(
@@ -334,7 +346,11 @@ class PipelineOrchestratorV2:
         self.logger.info(f"Summary written to {summary_file}", path=str(summary_file))
 
 
-def run(brief_path: str, resume: bool = False, retry_failed: bool = False) -> dict[str, Any]:
+def run(
+    brief_path: str | pathlib.Path | dict[str, Any],
+    resume: bool = False,
+    retry_failed: bool = False,
+) -> dict[str, Any]:
     orchestrator = PipelineOrchestratorV2()
     return orchestrator.run(brief_path, resume=resume, retry_failed=retry_failed)
 
@@ -343,10 +359,11 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="ANANTA Multi-Agent Production Pipeline v2")
     ap.add_argument("--brief", required=True, help="Path to episode brief JSON")
     ap.add_argument("--resume", action="store_true", help="Resume from checkpoint")
+    ap.add_argument("--retry-failed", action="store_true", help="Retry failed stages on resume")
     args = ap.parse_args()
 
     try:
-        run(args.brief, resume=args.resume)
+        run(args.brief, resume=args.resume, retry_failed=args.retry_failed)
     except KeyboardInterrupt:
         LOGGER.error("Pipeline interrupted by user")
         sys.exit(1)
