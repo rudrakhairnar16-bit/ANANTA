@@ -193,6 +193,15 @@ class ConcurrentPipelineOrchestrator:
         failed_stages_list: list[dict[str, Any]] = []
 
         def make_worker_callable(stage: str):
+            custom_agent = self.agent_factory(stage) if self.agent_factory is not None else None
+            stage_agent = None
+            if custom_agent is None:
+                stage_agent = get_agent_v2(
+                    stage,
+                    artifact_manager=self.artifact_manager,
+                    validator=self.validator,
+                )
+
             def worker_callable(worker_inputs: dict[str, Any]) -> dict[str, Any]:
                 deps = dependencies_map.get(stage, [])
                 parent_artifacts: dict[str, Any] = {}
@@ -308,9 +317,8 @@ class ConcurrentPipelineOrchestrator:
                     if token and token.is_cancelled():
                         raise RuntimeError(f"Stage '{stage}' cancelled before execution")
 
-                    if self.agent_factory is not None:
-                        target_fn = self.agent_factory(stage)
-                        raw_result = target_fn(stage_inputs)
+                    if custom_agent is not None:
+                        raw_result = custom_agent(stage_inputs)
                         if not isinstance(raw_result, dict):
                             raw_result = {f"{stage}_out": raw_result}
 
@@ -341,12 +349,7 @@ class ConcurrentPipelineOrchestrator:
                                 self.checkpoint_manager.checkpoint(pipeline_state)
                         return raw_result
                     else:
-                        agent = get_agent_v2(
-                            stage,
-                            artifact_manager=self.artifact_manager,
-                            validator=self.validator,
-                        )
-                        agent_out = agent.run(
+                        agent_out = stage_agent.run(
                             stage_inputs,
                             pipeline_state=pipeline_state,
                             episode_id=episode_id,

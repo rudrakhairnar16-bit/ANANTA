@@ -696,7 +696,11 @@ class OllamaProviderV2(BaseProviderV2):
                 f"Prompt template '{template_name}' not found for stage "
                 f"'{target_stage}' in {self.prompts_dir}"
             ) from e
-        return template.render(**inputs)
+        rendered = template.render(**inputs)
+        feedback_text = inputs.get("validation_feedback_text")
+        if feedback_text:
+            rendered = f"{rendered.rstrip()}\n\n{feedback_text.strip()}\n"
+        return rendered
 
     def _call_ollama(self, prompt: str) -> dict:
         url = "/api/generate"

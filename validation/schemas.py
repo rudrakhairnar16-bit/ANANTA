@@ -13,9 +13,48 @@ except ImportError:
     jsonschema = None
 
 
+@dataclass
+class ValidationFeedback:
+    """Structured feedback payload detailing schema validation errors for model correction."""
+    stage: str
+    attempt: int
+    errors: list[str]
+    message: str
+    previous_output: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "stage": self.stage,
+            "attempt": self.attempt,
+            "errors": self.errors,
+            "message": self.message,
+        }
+
+    def format_prompt_instruction(self) -> str:
+        errors_str = "\n".join(f"- {err}" for err in self.errors)
+        return (
+            "\n\n### VALIDATION FEEDBACK FROM PREVIOUS ATTEMPT ###\n"
+            f"Your previous output for stage '{self.stage}' failed schema validation:\n"
+            f"{errors_str}\n\n"
+            "Please fix the above errors and ensure your JSON response matches the "
+            "required schema exactly."
+        )
+
+
 class SchemaValidationError(RetryableError, ValueError):
     """Raised when stage output fails schema validation."""
-    pass
+
+    def __init__(
+        self,
+        message: str,
+        feedback: ValidationFeedback | None = None,
+        errors: list[str] | list[Any] | None = None,
+        stage: str | None = None,
+    ):
+        super().__init__(message)
+        self.feedback = feedback
+        self.errors = errors or []
+        self.stage = stage
 
 
 @dataclass

@@ -13,7 +13,7 @@ from pipeline.recovery import StageRecoveryManager
 from pipeline.state import PipelineState
 from providers.base_v2 import BaseProviderV2, ProviderResponse
 from providers.registry_v2 import get_provider_for_stage_v2
-from validation.schemas import SchemaValidationError, StageValidator
+from validation.schemas import SchemaValidationError, StageValidator, ValidationFeedback
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -57,6 +57,14 @@ class BaseAgentV2:
         self.recovery_manager = recovery_manager or StageRecoveryManager()
         self.logger = logger or get_logger(f"agent.{stage}")
         self._stage_spec = self._get_stage_spec()
+        self._last_validation_feedback: ValidationFeedback | None = None
+        self._current_episode_id: str | None = None
+        self._attempt_count: int = 0
+
+    def reset_feedback(self):
+        self._last_validation_feedback = None
+        self._current_episode_id = None
+        self._attempt_count = 0
 
     def _get_stage_spec(self) -> StageSpec | None:
         graph = get_default_dependency_graph()
@@ -91,6 +99,22 @@ class BaseAgentV2:
             raise ValueError(f"Invalid inputs for {self.stage} agent")
 
         episode_id = episode_id or inputs.get("episode_id", "UNKNOWN")
+
+        if self._current_episode_id != episode_id:
+            self._current_episode_id = episode_id
+            self._last_validation_feedback = None
+            self._attempt_count = 0
+
+        self._attempt_count += 1
+
+        if (
+            self._last_validation_feedback is not None
+            and self._last_validation_feedback.stage == self.stage
+        ):
+            inputs["validation_feedback"] = self._last_validation_feedback.to_dict()
+            inputs["validation_feedback_text"] = (
+                self._last_validation_feedback.format_prompt_instruction()
+            )
 
         with log_context(episode_id=episode_id, stage=self.stage):
             self.logger.stage_start(self.stage, 0, 1)
@@ -162,9 +186,25 @@ class BaseAgentV2:
                     if stage_state:
                         stage_state.mark_failed(f"Output validation failed: {error_messages}")
                         pipeline_state.update_stage(stage_state)
-                raise SchemaValidationError(
-                    f"Output validation failed for stage '{self.stage}': {error_messages}"
+
+                errors_list = [e.message for e in validation_result.errors]
+                feedback = ValidationFeedback(
+                    stage=self.stage,
+                    attempt=self._attempt_count,
+                    errors=errors_list,
+                    message=error_messages,
+                    previous_output=result_data.get("outputs"),
                 )
+                self._last_validation_feedback = feedback
+
+                raise SchemaValidationError(
+                    f"Output validation failed for stage '{self.stage}': {error_messages}",
+                    feedback=feedback,
+                    errors=errors_list,
+                    stage=self.stage,
+                )
+
+            self._last_validation_feedback = None
 
             if pipeline_state:
                 stage_state = pipeline_state.get_stage(self.stage)
