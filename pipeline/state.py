@@ -25,6 +25,21 @@ class InvalidStateTransitionError(ValueError):
     """Raised when a stage status transition is not in VALID_TRANSITIONS."""
 
 
+class StatePersistenceError(Exception):
+    """Base exception for state persistence and recovery failures."""
+
+
+class StateCorruptionError(StatePersistenceError):
+    """Raised when persisted pipeline state is corrupted or unparseable."""
+
+
+class StateVersionError(StatePersistenceError):
+    """Raised when persisted pipeline state has an unsupported schema version."""
+
+
+CURRENT_SCHEMA_VERSION = "2.0"
+
+
 VALID_TRANSITIONS: dict[StageStatus, frozenset[StageStatus]] = {
     StageStatus.PENDING: frozenset(
         {
@@ -64,7 +79,13 @@ VALID_TRANSITIONS: dict[StageStatus, frozenset[StageStatus]] = {
         }
     ),
     StageStatus.RETRYING: frozenset(
-        {StageStatus.RUNNING, StageStatus.FAILED, StageStatus.CANCELLED, StageStatus.QUEUED}
+        {
+            StageStatus.RUNNING,
+            StageStatus.FAILED,
+            StageStatus.CANCELLED,
+            StageStatus.QUEUED,
+            StageStatus.RETRYING,
+        }
     ),
     StageStatus.COMPLETED: frozenset(),
     StageStatus.FAILED: frozenset(),
@@ -152,6 +173,8 @@ class PipelineState:
     episode_id: str
     title: str | None = None
     status: str = "pending"
+    schema_version: str = CURRENT_SCHEMA_VERSION
+    execution_id: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     completed_at: str | None = None
@@ -196,15 +219,27 @@ class PipelineState:
     def is_failed(self) -> bool:
         return any(s.status == StageStatus.FAILED for s in self.stages.values())
 
-    def get_next_pending_stage(self, stage_order: list[str]) -> str | None:
+    def get_next_pending_stage(
+        self, stage_order: list[str], allow_failed: bool = False
+    ) -> str | None:
+        runnable_statuses = {
+            StageStatus.PENDING,
+            StageStatus.RUNNING,
+            StageStatus.RETRYING,
+            StageStatus.QUEUED,
+        }
+        if allow_failed:
+            runnable_statuses.add(StageStatus.FAILED)
         for stage in stage_order:
             state = self.stages.get(stage)
-            if state and state.status == StageStatus.PENDING:
+            if state and state.status in runnable_statuses:
                 return stage
         return None
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": self.schema_version,
+            "execution_id": self.execution_id,
             "episode_id": self.episode_id,
             "title": self.title,
             "status": self.status,
@@ -221,10 +256,30 @@ class PipelineState:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PipelineState":
+        if not isinstance(data, dict):
+            raise StateCorruptionError(
+                f"Expected dict for PipelineState, got {type(data).__name__}"
+            )
+        if "episode_id" not in data or not data["episode_id"]:
+            raise StateCorruptionError("Missing required field 'episode_id' in PipelineState")
+
+        schema_version = str(data.get("schema_version", "1.0"))
+        try:
+            ver_float = float(schema_version)
+            if ver_float > float(CURRENT_SCHEMA_VERSION):
+                raise StateVersionError(
+                    f"Unsupported schema_version: {schema_version} "
+                    f"(supported <= {CURRENT_SCHEMA_VERSION})"
+                )
+        except ValueError as e:
+            raise StateVersionError(f"Invalid schema_version: {schema_version}") from e
+
         state = cls(
             episode_id=data["episode_id"],
             title=data.get("title"),
             status=data.get("status", "pending"),
+            schema_version=schema_version,
+            execution_id=data.get("execution_id"),
             created_at=data.get("created_at", datetime.now(timezone.utc).isoformat()),
             updated_at=data.get("updated_at", datetime.now(timezone.utc).isoformat()),
             completed_at=data.get("completed_at"),
@@ -248,24 +303,69 @@ class StateStore:
     def _get_state_path(self, episode_id: str) -> Path:
         return self.base_path / f"{episode_id}_state.json"
 
+    def _get_backup_path(self, episode_id: str) -> Path:
+        return self.base_path / f"{episode_id}_state.json.bak"
+
     def save(self, state: PipelineState):
         validate_episode_id(state.episode_id)
         path = self._get_state_path(state.episode_id)
+        backup_path = self._get_backup_path(state.episode_id)
+
+        # Back up existing file if present and valid
+        if path.exists():
+            try:
+                raw = path.read_text(encoding="utf-8")
+                json.loads(raw)
+                atomic_write_text(backup_path, raw)
+            except Exception:
+                pass
+
         atomic_write_text(path, json.dumps(state.to_dict(), indent=2))
 
     def load(self, episode_id: str) -> PipelineState | None:
         validate_episode_id(episode_id)
         path = self._get_state_path(episode_id)
+        backup_path = self._get_backup_path(episode_id)
+
         if not path.exists():
+            if backup_path.exists():
+                return self._load_file(backup_path, episode_id)
             return None
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return PipelineState.from_dict(data)
+
+        try:
+            return self._load_file(path, episode_id)
+        except StateCorruptionError:
+            if backup_path.exists():
+                try:
+                    return self._load_file(backup_path, episode_id)
+                except Exception:
+                    pass
+            raise
+
+    def _load_file(self, path: Path, episode_id: str) -> PipelineState:
+        try:
+            raw_text = path.read_text(encoding="utf-8")
+            data = json.loads(raw_text)
+        except json.JSONDecodeError as e:
+            raise StateCorruptionError(f"Corrupted state JSON in {path.name}: {e}") from e
+        except OSError as e:
+            raise StateCorruptionError(f"Cannot read state file {path.name}: {e}") from e
+
+        try:
+            return PipelineState.from_dict(data)
+        except (StateVersionError, StateCorruptionError):
+            raise
+        except Exception as e:
+            raise StateCorruptionError(f"Invalid state data in {path.name}: {e}") from e
 
     def delete(self, episode_id: str):
         validate_episode_id(episode_id)
         path = self._get_state_path(episode_id)
         if path.exists():
             path.unlink()
+        backup_path = self._get_backup_path(episode_id)
+        if backup_path.exists():
+            backup_path.unlink()
 
     def list_states(self) -> list[str]:
         return [f.stem.replace("_state", "") for f in self.base_path.glob("*_state.json")]
@@ -281,17 +381,21 @@ class CheckpointManager:
     def restore(self, episode_id: str) -> PipelineState | None:
         return self.state_store.load(episode_id)
 
-    def can_resume(self, episode_id: str) -> bool:
+    def can_resume(self, episode_id: str, allow_failed: bool = False) -> bool:
         state = self.state_store.load(episode_id)
         if not state:
             return False
+        if allow_failed:
+            return not state.is_completed()
         return not state.is_completed() and not state.is_failed()
 
-    def get_resume_stage(self, episode_id: str, stage_order: list[str]) -> str | None:
+    def get_resume_stage(
+        self, episode_id: str, stage_order: list[str], allow_failed: bool = False
+    ) -> str | None:
         state = self.state_store.load(episode_id)
         if not state:
             return None
-        return state.get_next_pending_stage(stage_order)
+        return state.get_next_pending_stage(stage_order, allow_failed=allow_failed)
 
 
 def create_initial_state(episode_id: str, title: str, stages: list[str]) -> PipelineState:

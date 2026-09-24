@@ -7,6 +7,7 @@ from typing import Any
 from config_v2 import get_settings
 from observability.logging import get_logger, log_context
 from pipeline.artifacts import ArtifactManager
+from pipeline.atomic_io import atomic_write_text
 from pipeline.dependencies import StageSpec, get_default_dependency_graph
 from pipeline.recovery import StageRecoveryManager
 from pipeline.state import PipelineState
@@ -213,7 +214,7 @@ class BaseAgentV2:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         output_file = output_dir / f"{episode_id}_{self.stage}.json"
-        output_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        atomic_write_text(output_file, json.dumps(data, indent=2))
         self.logger.info(
             f"Written to {output_file}",
             stage=self.stage,

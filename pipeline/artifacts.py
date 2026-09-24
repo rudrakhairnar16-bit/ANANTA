@@ -10,6 +10,14 @@ from pipeline.atomic_io import atomic_write_text
 from pipeline.episode_ids import validate_episode_id
 
 
+class ArtifactIntegrityError(Exception):
+    """Base exception for artifact integrity, corruption, or verification failures."""
+
+
+class ArtifactCorruptionError(ArtifactIntegrityError):
+    """Raised when an artifact payload or metadata is corrupted or fails checksum verification."""
+
+
 @dataclass
 class ArtifactMetadata:
     name: str
@@ -108,6 +116,7 @@ class ArtifactStore:
         episode_dir = self.base_path / episode_id
         episode_dir.mkdir(parents=True, exist_ok=True)
 
+        self._load_index()
         existing_versions = [
             int(meta.version) for meta in self._index.values()
             if meta.stage == stage and meta.name.startswith(f"{episode_id}:")
@@ -116,7 +125,8 @@ class ArtifactStore:
         version = max(existing_versions, default=0) + 1
 
         artifact_id = f"{episode_id}:{stage}:v{version}"
-        data_bytes = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        data_text = json.dumps(data, indent=2, ensure_ascii=False)
+        data_bytes = data_text.encode("utf-8")
         checksum = self._compute_checksum(data_bytes)
 
         artifact_path = self._get_artifact_path(episode_id, stage, version)
@@ -163,11 +173,20 @@ class ArtifactStore:
                 if meta.stage == stage and meta.name.startswith(f"{episode_id}:")
             ]
             if not versions:
+                self._load_index()
+                versions = [
+                    (meta.version, artifact_id) for artifact_id, meta in self._index.items()
+                    if meta.stage == stage and meta.name.startswith(f"{episode_id}:")
+                ]
+            if not versions:
                 return None
             version = max(v for v, _ in versions)
 
         artifact_id = f"{episode_id}:{stage}:v{version}"
         metadata = self._index.get(artifact_id)
+        if not metadata:
+            self._load_index()
+            metadata = self._index.get(artifact_id)
         if not metadata:
             return None
 
@@ -175,8 +194,80 @@ class ArtifactStore:
         if not artifact_path.exists():
             return None
 
-        data = json.loads(artifact_path.read_text(encoding="utf-8"))
+        try:
+            raw_bytes = artifact_path.read_bytes()
+        except OSError as e:
+            raise ArtifactCorruptionError(f"Cannot read artifact {artifact_id}: {e}") from e
+
+        if metadata.checksum:
+            computed = self._compute_checksum(raw_bytes)
+            if computed != metadata.checksum:
+                raise ArtifactCorruptionError(
+                    f"Checksum mismatch for artifact {artifact_id}: "
+                    f"expected {metadata.checksum}, got {computed} (tampered or corrupted)"
+                )
+
+        try:
+            data = json.loads(raw_bytes.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            raise ArtifactCorruptionError(
+                f"Malformed JSON in artifact {artifact_id}: {e}"
+            ) from e
+
         return data, metadata
+
+    def reconcile_artifacts(self, episode_id: str) -> list[ArtifactReference]:
+        validate_episode_id(episode_id)
+        episode_dir = self.base_path / episode_id
+        if not episode_dir.exists():
+            return []
+
+        reconciled: list[ArtifactReference] = []
+        for payload_path in sorted(episode_dir.glob("*_v*.json")):
+            if payload_path.name.endswith(".meta.json"):
+                continue
+
+            name_parts = payload_path.stem.split("_v")
+            if len(name_parts) != 2:
+                continue
+            stage, ver_str = name_parts
+            try:
+                version = int(ver_str)
+            except ValueError:
+                continue
+
+            artifact_id = f"{episode_id}:{stage}:v{version}"
+            if artifact_id in self._index:
+                continue
+
+            meta_path = episode_dir / f"{stage}_v{version}.meta.json"
+            if not meta_path.exists():
+                continue
+
+            try:
+                meta_data = json.loads(meta_path.read_text(encoding="utf-8"))
+                meta = ArtifactMetadata.from_dict(meta_data)
+                raw_bytes = payload_path.read_bytes()
+                computed_checksum = self._compute_checksum(raw_bytes)
+                if meta.checksum and computed_checksum != meta.checksum:
+                    continue
+                json.loads(raw_bytes.decode("utf-8"))
+            except Exception:
+                continue
+
+            self._index[artifact_id] = meta
+            ref = ArtifactReference(
+                artifact_id=artifact_id,
+                stage=stage,
+                version=version,
+                path=str(payload_path),
+            )
+            reconciled.append(ref)
+
+        if reconciled:
+            self._save_index()
+
+        return reconciled
 
     def get_latest(
         self,

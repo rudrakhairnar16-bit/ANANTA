@@ -12,6 +12,7 @@ from agents.base_agent_v2 import get_agent_v2
 from config_v2 import get_settings
 from observability.logging import get_logger, log_context
 from pipeline.artifacts import ArtifactManager
+from pipeline.atomic_io import atomic_write_text
 from pipeline.dependencies import get_default_dependency_graph
 from pipeline.episode_ids import validate_episode_id
 from pipeline.recovery import StageRecoveryManager
@@ -48,6 +49,7 @@ class ExecutionContext:
     start_time: float = field(default_factory=time.perf_counter)
     completed_stages: list[str] = field(default_factory=list)
     failed_stages: list[dict[str, Any]] = field(default_factory=list)
+    is_resume: bool = False
 
 
 class PipelineOrchestratorV2:
@@ -69,7 +71,9 @@ class PipelineOrchestratorV2:
         self.settings = get_settings()
         self.logger = get_logger("pipeline.orchestrator")
 
-    def run(self, brief_path: str, resume: bool = False) -> dict[str, Any]:
+    def run(
+        self, brief_path: str, resume: bool = False, retry_failed: bool = False
+    ) -> dict[str, Any]:
         brief = json.loads(pathlib.Path(brief_path).read_text(encoding="utf-8"))
         episode_id = brief.get("episode_id", "UNKNOWN")
         validate_episode_id(episode_id)
@@ -89,8 +93,14 @@ class PipelineOrchestratorV2:
             if pipeline_state is None:
                 pipeline_state = create_initial_state(episode_id, brief.get("title"), self.stages)
                 pipeline_state.status = "running"
+                pipeline_state.execution_id = pipeline_id
             else:
                 pipeline_state.status = "running"
+                if pipeline_state.execution_id:
+                    pipeline_id = pipeline_state.execution_id
+                else:
+                    pipeline_state.execution_id = pipeline_id
+
                 for stage in self.stages:
                     if pipeline_state.get_stage(stage) is None:
                         pipeline_state.add_stage(stage)
@@ -104,10 +114,11 @@ class PipelineOrchestratorV2:
                 validator=self.validator,
                 recovery_manager=self.recovery_manager,
                 settings=self.settings,
+                is_resume=resume,
             )
 
             try:
-                result = self._execute_pipeline(context)
+                result = self._execute_pipeline(context, retry_failed=retry_failed)
             except KeyboardInterrupt:
                 self.logger.pipeline_failed(
                     pipeline_id,
@@ -146,7 +157,9 @@ class PipelineOrchestratorV2:
 
             return result
 
-    def _execute_pipeline(self, context: ExecutionContext) -> dict[str, Any]:
+    def _execute_pipeline(
+        self, context: ExecutionContext, retry_failed: bool = False
+    ) -> dict[str, Any]:
         graph = get_default_dependency_graph()
         execution_order = graph.get_execution_order()
 
@@ -160,16 +173,45 @@ class PipelineOrchestratorV2:
             pipeline_state = context.pipeline_state
             stage_state = pipeline_state.get_stage(stage)
 
-            if stage_state and stage_state.status == StageStatus.COMPLETED:
-                context.completed_stages.append(stage)
-                current_data = self._hydrate_completed_stage(context, stage, current_data)
-                continue
+            if context.is_resume:
+                if stage_state and stage_state.status == StageStatus.COMPLETED:
+                    context.completed_stages.append(stage)
+                    current_data = self._hydrate_completed_stage(context, stage, current_data)
+                    continue
+
+                # Crash window reconciliation: if artifact was already committed, treat as completed
+                try:
+                    existing_artifact = self.artifact_manager.get_latest_artifact(
+                        context.episode_id, stage
+                    )
+                except Exception:
+                    existing_artifact = None
+
+                if existing_artifact is not None:
+                    context.completed_stages.append(stage)
+                    if stage_state and stage_state.status != StageStatus.COMPLETED:
+                        stage_state.status = StageStatus.COMPLETED
+                        stage_state.completed_at = (
+                            datetime.datetime.now(datetime.timezone.utc).isoformat()
+                        )
+                        pipeline_state.update_stage(stage_state)
+                    current_data = self._hydrate_completed_stage(context, stage, current_data)
+                    continue
 
             if stage_state and stage_state.status == StageStatus.FAILED:
-                context.failed_stages.append(
-                    {"stage": stage, "error": stage_state.error or "Unknown error"}
-                )
-                break
+                if retry_failed:
+                    self.logger.info(
+                        f"Retrying failed stage {stage} per operator request",
+                        stage=stage,
+                    )
+                    stage_state.status = StageStatus.PENDING
+                    stage_state.error = None
+                    pipeline_state.update_stage(stage_state)
+                else:
+                    context.failed_stages.append(
+                        {"stage": stage, "error": stage_state.error or "Unknown error"}
+                    )
+                    break
 
             self.logger.info(
                 f"Executing stage {stage}",
@@ -177,6 +219,18 @@ class PipelineOrchestratorV2:
                 stage_index=i + 1,
                 total_stages=len(self.stages),
             )
+
+            if (
+                stage_state
+                and stage_state.status != StageStatus.RUNNING
+                and stage_state.status in (
+                    StageStatus.PENDING,
+                    StageStatus.RETRYING,
+                    StageStatus.QUEUED,
+                )
+            ):
+                stage_state.mark_running()
+                pipeline_state.update_stage(stage_state)
 
             agent = get_agent_v2(stage, artifact_manager=self.artifact_manager)
 
@@ -263,14 +317,13 @@ class PipelineOrchestratorV2:
 
     def _save_summary(self, summary: dict[str, Any], episode_id: str):
         summary_file = ROOT / "outputs" / f"{episode_id}_pipeline_summary.json"
-        summary_file.parent.mkdir(parents=True, exist_ok=True)
-        summary_file.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        atomic_write_text(summary_file, json.dumps(summary, indent=2))
         self.logger.info(f"Summary written to {summary_file}", path=str(summary_file))
 
 
-def run(brief_path: str, resume: bool = False) -> dict[str, Any]:
+def run(brief_path: str, resume: bool = False, retry_failed: bool = False) -> dict[str, Any]:
     orchestrator = PipelineOrchestratorV2()
-    return orchestrator.run(brief_path, resume=resume)
+    return orchestrator.run(brief_path, resume=resume, retry_failed=retry_failed)
 
 
 if __name__ == "__main__":
