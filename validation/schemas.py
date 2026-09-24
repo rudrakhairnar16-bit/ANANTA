@@ -3,12 +3,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pipeline.retry import RetryableError
+
 try:
     import jsonschema
     HAS_JSONSCHEMA = True
 except ImportError:
     HAS_JSONSCHEMA = False
     jsonschema = None
+
+
+class SchemaValidationError(RetryableError, ValueError):
+    """Raised when stage output fails schema validation."""
+    pass
 
 
 @dataclass

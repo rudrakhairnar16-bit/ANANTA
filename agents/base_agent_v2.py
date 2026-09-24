@@ -13,7 +13,7 @@ from pipeline.recovery import StageRecoveryManager
 from pipeline.state import PipelineState
 from providers.base_v2 import BaseProviderV2, ProviderResponse
 from providers.registry_v2 import get_provider_for_stage_v2
-from validation.schemas import StageValidator
+from validation.schemas import SchemaValidationError, StageValidator
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -145,7 +145,7 @@ class BaseAgentV2:
             result_data["stage"] = self.stage
             result_data["version"] = inputs.get("version", 1) + 1
             result_data["generated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-            result_data["inputs"] = inputs
+            result_data["inputs"] = {k: v for k, v in inputs.items() if k != "cancellation_token"}
             result_data["approval_status"] = "pending"
 
             validation_result = self.validator.validate_output(self.stage, result_data)
@@ -162,7 +162,7 @@ class BaseAgentV2:
                     if stage_state:
                         stage_state.mark_failed(f"Output validation failed: {error_messages}")
                         pipeline_state.update_stage(stage_state)
-                raise ValueError(
+                raise SchemaValidationError(
                     f"Output validation failed for stage '{self.stage}': {error_messages}"
                 )
 

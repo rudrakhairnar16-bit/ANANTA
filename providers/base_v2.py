@@ -10,20 +10,22 @@ from uuid import uuid4
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from pipeline.retry import RetryableError
+
 
 class ProviderError(Exception):
     pass
 
 
-class ProviderUnavailableError(ProviderError):
+class ProviderUnavailableError(ProviderError, RetryableError):
     pass
 
 
-class ProviderTimeoutError(ProviderError):
+class ProviderTimeoutError(ProviderError, RetryableError):
     pass
 
 
-class ProviderValidationError(ProviderError):
+class ProviderValidationError(ProviderError, RetryableError):
     pass
 
 
