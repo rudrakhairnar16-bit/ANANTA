@@ -107,9 +107,7 @@ class StageState:
 
     def transition(self, new_status: StageStatus):
         if not isinstance(new_status, StageStatus):
-            raise InvalidStateTransitionError(
-                f"{new_status!r} is not a valid stage status"
-            )
+            raise InvalidStateTransitionError(f"{new_status!r} is not a valid stage status")
         allowed = VALID_TRANSITIONS.get(self.status, frozenset())
         if new_status not in allowed:
             raise InvalidStateTransitionError(
@@ -206,14 +204,11 @@ class PipelineState:
         self.completed_stages = sum(
             1 for s in self.stages.values() if s.status == StageStatus.COMPLETED
         )
-        self.failed_stages = sum(
-            1 for s in self.stages.values() if s.status == StageStatus.FAILED
-        )
+        self.failed_stages = sum(1 for s in self.stages.values() if s.status == StageStatus.FAILED)
 
     def is_completed(self) -> bool:
         return all(
-            s.status in (StageStatus.COMPLETED, StageStatus.SKIPPED)
-            for s in self.stages.values()
+            s.status in (StageStatus.COMPLETED, StageStatus.SKIPPED) for s in self.stages.values()
         )
 
     def is_failed(self) -> bool:
@@ -289,9 +284,7 @@ class PipelineState:
             failed_stages=data.get("failed_stages", 0),
             metadata=data.get("metadata", {}),
         )
-        state.stages = {
-            k: StageState.from_dict(v) for k, v in data.get("stages", {}).items()
-        }
+        state.stages = {k: StageState.from_dict(v) for k, v in data.get("stages", {}).items()}
         return state
 
 
@@ -372,8 +365,21 @@ class StateStore:
 
 
 class CheckpointManager:
-    def __init__(self, state_store: StateStore | None = None):
-        self.state_store = state_store or StateStore()
+    def __init__(
+        self,
+        state_store: StateStore | str | Path | None = None,
+        checkpoint_dir: str | Path | None = None,
+    ):
+        if checkpoint_dir is not None:
+            self.state_store = (
+                state_store
+                if isinstance(state_store, StateStore)
+                else StateStore(base_path=checkpoint_dir)
+            )
+        elif isinstance(state_store, (str, Path)):
+            self.state_store = StateStore(base_path=state_store)
+        else:
+            self.state_store = state_store or StateStore()
 
     def checkpoint(self, state: PipelineState):
         self.state_store.save(state)

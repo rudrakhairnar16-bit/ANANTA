@@ -29,10 +29,25 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 LOGGER = get_logger("pipeline.orchestrator")
 
 DEFAULT_STAGES = [
-    "story", "screenplay", "scene_plan", "character", "world",
-    "storyboard", "director", "camera", "visual", "motion",
-    "voice", "music", "bgm", "sfx", "lipsync",
-    "edit", "adobe_export", "qa", "export"
+    "story",
+    "screenplay",
+    "scene_plan",
+    "character",
+    "world",
+    "storyboard",
+    "director",
+    "camera",
+    "visual",
+    "motion",
+    "voice",
+    "music",
+    "bgm",
+    "sfx",
+    "lipsync",
+    "edit",
+    "adobe_export",
+    "qa",
+    "export",
 ]
 
 
@@ -191,9 +206,9 @@ class PipelineOrchestratorV2:
                     context.completed_stages.append(stage)
                     if stage_state and stage_state.status != StageStatus.COMPLETED:
                         stage_state.status = StageStatus.COMPLETED
-                        stage_state.completed_at = (
-                            datetime.datetime.now(datetime.timezone.utc).isoformat()
-                        )
+                        stage_state.completed_at = datetime.datetime.now(
+                            datetime.timezone.utc
+                        ).isoformat()
                         pipeline_state.update_stage(stage_state)
                     current_data = self._hydrate_completed_stage(context, stage, current_data)
                     continue
@@ -223,7 +238,8 @@ class PipelineOrchestratorV2:
             if (
                 stage_state
                 and stage_state.status != StageStatus.RUNNING
-                and stage_state.status in (
+                and stage_state.status
+                in (
                     StageStatus.PENDING,
                     StageStatus.RETRYING,
                     StageStatus.QUEUED,
@@ -282,10 +298,7 @@ class PipelineOrchestratorV2:
         result_data: dict[str, Any],
     ) -> dict[str, Any]:
         merged = {**inputs, **result_data}
-        if (
-            isinstance(inputs.get("outputs"), dict)
-            and isinstance(result_data.get("outputs"), dict)
-        ):
+        if isinstance(inputs.get("outputs"), dict) and isinstance(result_data.get("outputs"), dict):
             merged["outputs"] = {**inputs["outputs"], **result_data["outputs"]}
         stage_inputs = result_data.get("inputs")
         if isinstance(stage_inputs, dict):
@@ -340,5 +353,6 @@ if __name__ == "__main__":
     except Exception as e:
         LOGGER.error(f"Pipeline failed: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

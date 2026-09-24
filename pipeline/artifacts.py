@@ -1,6 +1,7 @@
 import hashlib
 import json
 import shutil
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -71,8 +72,10 @@ class ArtifactStore:
     def __init__(self, base_path: str | Path = "outputs/artifacts"):
         self.base_path = Path(base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
         self._index: dict[str, ArtifactMetadata] = {}
-        self._load_index()
+        with self._lock:
+            self._load_index()
 
     def _load_index(self):
         index_path = self.base_path / "index.json"
@@ -116,49 +119,51 @@ class ArtifactStore:
         episode_dir = self.base_path / episode_id
         episode_dir.mkdir(parents=True, exist_ok=True)
 
-        self._load_index()
-        existing_versions = [
-            int(meta.version) for meta in self._index.values()
-            if meta.stage == stage and meta.name.startswith(f"{episode_id}:")
-        ]
+        with self._lock:
+            self._load_index()
+            existing_versions = [
+                int(meta.version)
+                for meta in self._index.values()
+                if meta.stage == stage and meta.name.startswith(f"{episode_id}:")
+            ]
 
-        version = max(existing_versions, default=0) + 1
+            version = max(existing_versions, default=0) + 1
 
-        artifact_id = f"{episode_id}:{stage}:v{version}"
-        data_text = json.dumps(data, indent=2, ensure_ascii=False)
-        data_bytes = data_text.encode("utf-8")
-        checksum = self._compute_checksum(data_bytes)
+            artifact_id = f"{episode_id}:{stage}:v{version}"
+            data_text = json.dumps(data, indent=2, ensure_ascii=False)
+            data_bytes = data_text.encode("utf-8")
+            checksum = self._compute_checksum(data_bytes)
 
-        artifact_path = self._get_artifact_path(episode_id, stage, version)
-        metadata_path = self._get_metadata_path(episode_id, stage, version)
+            artifact_path = self._get_artifact_path(episode_id, stage, version)
+            metadata_path = self._get_metadata_path(episode_id, stage, version)
 
-        self._write_payload(artifact_path, data)
+            self._write_payload(artifact_path, data)
 
-        metadata = ArtifactMetadata(
-            name=artifact_id,
-            stage=stage,
-            version=version,
-            episode_id=episode_id,
-            size_bytes=len(data_bytes),
-            checksum=checksum,
-            lineage=lineage or {},
-            tags=tags or [],
-        )
+            metadata = ArtifactMetadata(
+                name=artifact_id,
+                stage=stage,
+                version=version,
+                episode_id=episode_id,
+                size_bytes=len(data_bytes),
+                checksum=checksum,
+                lineage=lineage or {},
+                tags=tags or [],
+            )
 
-        self._write_metadata(metadata_path, metadata)
-        self._index[artifact_id] = metadata
-        try:
-            self._save_index()
-        except BaseException:
-            self._index.pop(artifact_id, None)
-            raise
+            self._write_metadata(metadata_path, metadata)
+            self._index[artifact_id] = metadata
+            try:
+                self._save_index()
+            except BaseException:
+                self._index.pop(artifact_id, None)
+                raise
 
-        return ArtifactReference(
-            artifact_id=artifact_id,
-            stage=stage,
-            version=version,
-            path=str(artifact_path),
-        )
+            return ArtifactReference(
+                artifact_id=artifact_id,
+                stage=stage,
+                version=version,
+                path=str(artifact_path),
+            )
 
     def get(
         self,
@@ -167,54 +172,57 @@ class ArtifactStore:
         version: int | None = None,
     ) -> tuple[dict[str, Any], ArtifactMetadata] | None:
         validate_episode_id(episode_id)
-        if version is None:
-            versions = [
-                (meta.version, artifact_id) for artifact_id, meta in self._index.items()
-                if meta.stage == stage and meta.name.startswith(f"{episode_id}:")
-            ]
-            if not versions:
-                self._load_index()
+        with self._lock:
+            if version is None:
                 versions = [
-                    (meta.version, artifact_id) for artifact_id, meta in self._index.items()
+                    (meta.version, artifact_id)
+                    for artifact_id, meta in self._index.items()
                     if meta.stage == stage and meta.name.startswith(f"{episode_id}:")
                 ]
-            if not versions:
-                return None
-            version = max(v for v, _ in versions)
+                if not versions:
+                    self._load_index()
+                    versions = [
+                        (meta.version, artifact_id)
+                        for artifact_id, meta in self._index.items()
+                        if meta.stage == stage and meta.name.startswith(f"{episode_id}:")
+                    ]
+                if not versions:
+                    return None
+                version = max(v for v, _ in versions)
 
-        artifact_id = f"{episode_id}:{stage}:v{version}"
-        metadata = self._index.get(artifact_id)
-        if not metadata:
-            self._load_index()
+            artifact_id = f"{episode_id}:{stage}:v{version}"
             metadata = self._index.get(artifact_id)
-        if not metadata:
-            return None
+            if not metadata:
+                self._load_index()
+                metadata = self._index.get(artifact_id)
+            if not metadata:
+                return None
 
-        artifact_path = self._get_artifact_path(episode_id, stage, version)
-        if not artifact_path.exists():
-            return None
+            artifact_path = self._get_artifact_path(episode_id, stage, version)
+            if not artifact_path.exists():
+                return None
 
-        try:
-            raw_bytes = artifact_path.read_bytes()
-        except OSError as e:
-            raise ArtifactCorruptionError(f"Cannot read artifact {artifact_id}: {e}") from e
+            try:
+                raw_bytes = artifact_path.read_bytes()
+            except OSError as e:
+                raise ArtifactCorruptionError(f"Cannot read artifact {artifact_id}: {e}") from e
 
-        if metadata.checksum:
-            computed = self._compute_checksum(raw_bytes)
-            if computed != metadata.checksum:
+            if metadata.checksum:
+                computed = self._compute_checksum(raw_bytes)
+                if computed != metadata.checksum:
+                    raise ArtifactCorruptionError(
+                        f"Checksum mismatch for artifact {artifact_id}: "
+                        f"expected {metadata.checksum}, got {computed} (tampered or corrupted)"
+                    )
+
+            try:
+                data = json.loads(raw_bytes.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
                 raise ArtifactCorruptionError(
-                    f"Checksum mismatch for artifact {artifact_id}: "
-                    f"expected {metadata.checksum}, got {computed} (tampered or corrupted)"
-                )
+                    f"Malformed JSON in artifact {artifact_id}: {e}"
+                ) from e
 
-        try:
-            data = json.loads(raw_bytes.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            raise ArtifactCorruptionError(
-                f"Malformed JSON in artifact {artifact_id}: {e}"
-            ) from e
-
-        return data, metadata
+            return data, metadata
 
     def reconcile_artifacts(self, episode_id: str) -> list[ArtifactReference]:
         validate_episode_id(episode_id)
@@ -222,52 +230,69 @@ class ArtifactStore:
         if not episode_dir.exists():
             return []
 
-        reconciled: list[ArtifactReference] = []
-        for payload_path in sorted(episode_dir.glob("*_v*.json")):
-            if payload_path.name.endswith(".meta.json"):
-                continue
-
-            name_parts = payload_path.stem.split("_v")
-            if len(name_parts) != 2:
-                continue
-            stage, ver_str = name_parts
-            try:
-                version = int(ver_str)
-            except ValueError:
-                continue
-
-            artifact_id = f"{episode_id}:{stage}:v{version}"
-            if artifact_id in self._index:
-                continue
-
-            meta_path = episode_dir / f"{stage}_v{version}.meta.json"
-            if not meta_path.exists():
-                continue
-
-            try:
-                meta_data = json.loads(meta_path.read_text(encoding="utf-8"))
-                meta = ArtifactMetadata.from_dict(meta_data)
-                raw_bytes = payload_path.read_bytes()
-                computed_checksum = self._compute_checksum(raw_bytes)
-                if meta.checksum and computed_checksum != meta.checksum:
+        with self._lock:
+            reconciled: list[ArtifactReference] = []
+            for payload_path in sorted(episode_dir.glob("*_v*.json")):
+                if payload_path.name.endswith(".meta.json"):
                     continue
-                json.loads(raw_bytes.decode("utf-8"))
-            except Exception:
-                continue
 
-            self._index[artifact_id] = meta
-            ref = ArtifactReference(
-                artifact_id=artifact_id,
-                stage=stage,
-                version=version,
-                path=str(payload_path),
-            )
-            reconciled.append(ref)
+                name_parts = payload_path.stem.split("_v")
+                if len(name_parts) != 2:
+                    continue
+                stage, ver_str = name_parts
+                try:
+                    version = int(ver_str)
+                except ValueError:
+                    continue
 
-        if reconciled:
-            self._save_index()
+                artifact_id = f"{episode_id}:{stage}:v{version}"
+                if artifact_id in self._index:
+                    continue
 
-        return reconciled
+                meta_path = episode_dir / f"{stage}_v{version}.meta.json"
+                if not meta_path.exists():
+                    continue
+
+                try:
+                    meta_data = json.loads(meta_path.read_text(encoding="utf-8"))
+                    meta = ArtifactMetadata.from_dict(meta_data)
+                    raw_bytes = payload_path.read_bytes()
+                    computed_checksum = self._compute_checksum(raw_bytes)
+                    if meta.checksum and computed_checksum != meta.checksum:
+                        continue
+                    json.loads(raw_bytes.decode("utf-8"))
+                except Exception:
+                    continue
+
+                self._index[artifact_id] = meta
+                ref = ArtifactReference(
+                    artifact_id=artifact_id,
+                    stage=stage,
+                    version=version,
+                    path=str(payload_path),
+                )
+                reconciled.append(ref)
+
+            if reconciled:
+                self._save_index()
+
+            return reconciled
+
+    def verify_integrity(self, episode_id: str) -> bool:
+        validate_episode_id(episode_id)
+        with self._lock:
+            self._load_index()
+            artifacts = self.list_artifacts(episode_id)
+            if not artifacts:
+                return True
+            for meta in artifacts:
+                try:
+                    res = self.get(episode_id, meta.stage, version=meta.version)
+                    if res is None:
+                        return False
+                except Exception:
+                    return False
+            return True
 
     def get_latest(
         self,
@@ -277,58 +302,65 @@ class ArtifactStore:
         return self.get(episode_id, stage, version=None)
 
     def list_artifacts(self, episode_id: str) -> list[ArtifactMetadata]:
-        return [
-            meta for meta in self._index.values()
-            if meta.name.startswith(f"{episode_id}:")
-        ]
+        with self._lock:
+            return [meta for meta in self._index.values() if meta.name.startswith(f"{episode_id}:")]
 
     def list_stages(self, episode_id: str) -> list[str]:
-        return sorted({
-            meta.stage for meta in self._index.values()
-            if meta.name.startswith(f"{episode_id}:")
-        })
+        with self._lock:
+            return sorted(
+                {
+                    meta.stage
+                    for meta in self._index.values()
+                    if meta.name.startswith(f"{episode_id}:")
+                }
+            )
 
     def delete(self, episode_id: str, stage: str, version: int):
         validate_episode_id(episode_id)
         artifact_id = f"{episode_id}:{stage}:v{version}"
-        removed = None
-        if artifact_id in self._index:
-            removed = self._index.pop(artifact_id)
-            try:
-                self._save_index()
-            except BaseException:
-                if removed is not None:
-                    self._index[artifact_id] = removed
-                raise
+        with self._lock:
+            removed = None
+            if artifact_id in self._index:
+                removed = self._index.pop(artifact_id)
+                try:
+                    self._save_index()
+                except BaseException:
+                    if removed is not None:
+                        self._index[artifact_id] = removed
+                    raise
 
-        artifact_path = self._get_artifact_path(episode_id, stage, version)
-        metadata_path = self._get_metadata_path(episode_id, stage, version)
+            artifact_path = self._get_artifact_path(episode_id, stage, version)
+            metadata_path = self._get_metadata_path(episode_id, stage, version)
 
-        if artifact_path.exists():
-            artifact_path.unlink()
-        if metadata_path.exists():
-            metadata_path.unlink()
+            if artifact_path.exists():
+                artifact_path.unlink()
+            if metadata_path.exists():
+                metadata_path.unlink()
 
     def cleanup_episode(self, episode_id: str):
         validate_episode_id(episode_id)
-        removed: dict[str, ArtifactMetadata] = {}
-        for artifact_id in list(self._index.keys()):
-            if artifact_id.startswith(f"{episode_id}:"):
-                removed[artifact_id] = self._index.pop(artifact_id)
-        try:
-            self._save_index()
-        except BaseException:
-            self._index.update(removed)
-            raise
+        with self._lock:
+            removed: dict[str, ArtifactMetadata] = {}
+            for artifact_id in list(self._index.keys()):
+                if artifact_id.startswith(f"{episode_id}:"):
+                    removed[artifact_id] = self._index.pop(artifact_id)
+            try:
+                self._save_index()
+            except BaseException:
+                self._index.update(removed)
+                raise
 
-        episode_dir = self.base_path / episode_id
-        if episode_dir.exists():
-            shutil.rmtree(episode_dir)
+            episode_dir = self.base_path / episode_id
+            if episode_dir.exists():
+                shutil.rmtree(episode_dir)
 
 
 class ArtifactManager:
-    def __init__(self, artifact_store: ArtifactStore | None = None):
-        self.store = artifact_store or ArtifactStore()
+    def __init__(self, artifact_store: ArtifactStore | Path | str | None = None):
+        if isinstance(artifact_store, (Path, str)):
+            self.store = ArtifactStore(base_path=artifact_store)
+        else:
+            self.store = artifact_store or ArtifactStore()
 
     def store_stage_output(
         self,
@@ -355,3 +387,9 @@ class ArtifactManager:
         if result:
             return result[0]
         return None
+
+    def verify_integrity(self, episode_id: str) -> bool:
+        return self.store.verify_integrity(episode_id)
+
+    def reconcile_artifacts(self, episode_id: str) -> list[ArtifactReference]:
+        return self.store.reconcile_artifacts(episode_id)
