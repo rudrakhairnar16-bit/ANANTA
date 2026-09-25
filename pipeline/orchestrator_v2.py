@@ -71,6 +71,7 @@ class PipelineOrchestratorV2:
     def __init__(
         self,
         stages: list[str] | None = None,
+        agent_factory: Any | None = None,
         artifact_manager: ArtifactManager | None = None,
         validator: StageValidator | None = None,
         recovery_manager: StageRecoveryManager | None = None,
@@ -78,6 +79,7 @@ class PipelineOrchestratorV2:
         checkpoint_manager: CheckpointManager | None = None,
     ):
         self.stages = stages or DEFAULT_STAGES
+        self.agent_factory = agent_factory
         self.artifact_manager = artifact_manager or ArtifactManager()
         self.validator = validator or StageValidator()
         self.recovery_manager = recovery_manager or StageRecoveryManager()
@@ -255,19 +257,25 @@ class PipelineOrchestratorV2:
                 stage_state.mark_running()
                 pipeline_state.update_stage(stage_state)
 
-            agent = get_agent_v2(
-                stage,
-                artifact_manager=self.artifact_manager,
-                validator=self.validator,
-                recovery_manager=self.recovery_manager,
-            )
+            if self.agent_factory is not None:
+                agent = self.agent_factory(stage)
+            else:
+                agent = get_agent_v2(
+                    stage,
+                    artifact_manager=self.artifact_manager,
+                    validator=self.validator,
+                    recovery_manager=self.recovery_manager,
+                )
 
             try:
-                current_data = agent.run(
-                    current_data,
-                    pipeline_state=pipeline_state,
-                    episode_id=context.episode_id,
-                )
+                if hasattr(agent, "run"):
+                    current_data = agent.run(
+                        current_data,
+                        pipeline_state=pipeline_state,
+                        episode_id=context.episode_id,
+                    )
+                else:
+                    current_data = agent(current_data)
                 context.completed_stages.append(stage)
 
                 should_checkpoint = (

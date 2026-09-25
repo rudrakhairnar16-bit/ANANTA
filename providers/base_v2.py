@@ -186,12 +186,21 @@ class BaseProviderV2(ABC):
 
 
 class MockProviderV2(BaseProviderV2):
-    def __init__(self, stage: str, seed: int | None = None, simulate_latency_ms: int = 0):
+    def __init__(
+        self,
+        stage: str,
+        seed: int | None = None,
+        simulate_latency_ms: int = 0,
+        is_fallback: bool = False,
+        fallback_from_provider: str | None = None,
+    ):
         config = ProviderConfig(name=f"MockProvider_{stage}")
         super().__init__(config)
         self.stage = stage
         self.seed = seed
         self.simulate_latency_ms = simulate_latency_ms
+        self.is_fallback = is_fallback
+        self.fallback_from_provider = fallback_from_provider
         self._rng = None
         if seed is not None:
             import random
@@ -209,6 +218,25 @@ class MockProviderV2(BaseProviderV2):
             time.sleep(self.simulate_latency_ms / 1000.0)
 
         episode_id = inputs.get("episode_id", "UNKNOWN")
+        meta = {
+            "provider_name": self.config.name,
+            "provider_type": "mock",
+            "is_fallback": self.is_fallback,
+            "model_name": None,
+        }
+        if self.is_fallback:
+            meta["fallback_from"] = self.fallback_from_provider or "ollama"
+
+        warnings = [
+            f"This is a mock provider for {self.stage} "
+            f"- replace with real implementation"
+        ]
+        if self.is_fallback:
+            warnings.append(
+                f"Fallback to mock provider executed for stage '{self.stage}' "
+                f"because configured real provider was unavailable."
+            )
+
         base = {
             "episode_id": episode_id,
             "stage": self.stage,
@@ -217,10 +245,8 @@ class MockProviderV2(BaseProviderV2):
             "inputs": inputs,
             "outputs": {},
             "assumptions": [f"Mock output for {self.stage} stage"],
-            "warnings": [
-                f"This is a mock provider for {self.stage} "
-                f"- replace with real implementation"
-            ],
+            "warnings": warnings,
+            "metadata": meta,
             "approval_status": "pending",
         }
 
@@ -627,13 +653,20 @@ class OllamaProviderV2(BaseProviderV2):
         temperature: float = 0.7,
         stage: str | None = None,
         prompts_dir: str | Path | None = None,
+        health_check_timeout: float = 3.0,
+        health_check_ttl: float = 60.0,
     ):
         config = ProviderConfig(
             name=f"OllamaProvider_{stage}" if stage else "OllamaProvider",
             timeout=timeout,
             max_retries=max_retries,
             temperature=temperature,
-            extra={"base_url": base_url, "model": model},
+            extra={
+                "base_url": base_url,
+                "model": model,
+                "health_check_timeout": health_check_timeout,
+                "health_check_ttl": health_check_ttl,
+            },
         )
         super().__init__(config)
         self.base_url = base_url.rstrip("/")
@@ -642,6 +675,11 @@ class OllamaProviderV2(BaseProviderV2):
         self.prompts_dir = (
             Path(prompts_dir) if prompts_dir else Path(__file__).parent.parent / "prompts"
         )
+        self.health_check_timeout = health_check_timeout
+        self.health_check_ttl = health_check_ttl
+        self._last_health_check_time: float = 0.0
+        self._last_health_check_result: bool = False
+        self._last_health_check_details: dict[str, Any] = {}
         self._client: httpx.Client | None = None
 
     @property
@@ -764,6 +802,12 @@ class OllamaProviderV2(BaseProviderV2):
             "outputs": parsed,
             "assumptions": [f"Generated via Ollama model {self.model}"],
             "warnings": [],
+            "metadata": {
+                "provider_name": self.config.name,
+                "provider_type": "ollama",
+                "is_fallback": False,
+                "model_name": self.model,
+            },
             "approval_status": "pending",
         }
 
@@ -790,9 +834,88 @@ class OllamaProviderV2(BaseProviderV2):
     def _get_timestamp(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def health_check(self) -> bool:
+    def _is_model_available(self, models_data: list[Any], target_model: str) -> bool:
+        if not target_model:
+            return True
+        available_names: set[str] = set()
+        for m in models_data:
+            if isinstance(m, dict):
+                name = str(m.get("name") or m.get("model") or "").strip()
+            elif isinstance(m, str):
+                name = m.strip()
+            else:
+                name = ""
+            if name:
+                available_names.add(name.lower())
+                available_names.add(name.split(":")[0].lower())
+
+        target_lower = target_model.strip().lower()
+        target_base = target_lower.split(":")[0]
+        return (
+            target_lower in available_names
+            or target_base in available_names
+            or f"{target_lower}:latest" in available_names
+        )
+
+    def invalidate_health_cache(self) -> None:
+        self._last_health_check_time = 0.0
+        self._last_health_check_result = False
+        self._last_health_check_details = {}
+
+    def health_check(
+        self,
+        timeout: float | None = None,
+        check_model: bool = True,
+        force: bool = False,
+    ) -> bool:
+        import time
+
+        now = time.monotonic()
+        if not force and (now - self._last_health_check_time) < self.health_check_ttl:
+            return self._last_health_check_result
+
+        probe_timeout = timeout if timeout is not None else self.health_check_timeout
         try:
-            response = self.client.get("/api/tags", timeout=5.0)
-            return response.status_code == 200
-        except Exception:
+            response = self.client.get("/api/tags", timeout=probe_timeout)
+            if response.status_code != 200:
+                self._last_health_check_time = now
+                self._last_health_check_result = False
+                self._last_health_check_details = {
+                    "status": "http_error",
+                    "status_code": response.status_code,
+                }
+                return False
+
+            data = response.json()
+            if (
+                not isinstance(data, dict)
+                or "models" not in data
+                or not isinstance(data["models"], list)
+            ):
+                self._last_health_check_time = now
+                self._last_health_check_result = False
+                self._last_health_check_details = {"status": "malformed_response"}
+                return False
+
+            if (
+                check_model
+                and self.model
+                and not self._is_model_available(data["models"], self.model)
+            ):
+                self._last_health_check_time = now
+                self._last_health_check_result = False
+                self._last_health_check_details = {
+                    "status": "model_missing",
+                    "model": self.model,
+                }
+                return False
+
+            self._last_health_check_time = now
+            self._last_health_check_result = True
+            self._last_health_check_details = {"status": "healthy"}
+            return True
+        except Exception as e:
+            self._last_health_check_time = now
+            self._last_health_check_result = False
+            self._last_health_check_details = {"status": "exception", "error": str(e)}
             return False

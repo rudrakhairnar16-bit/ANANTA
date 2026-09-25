@@ -242,5 +242,9 @@ class TestM10PromptAndProviderIntegration:
         registry = ProviderRegistry(config)
         router = ModelRouter(registry)
 
-        char_provider = router.route("character", prefer_ollama=True)
-        assert isinstance(char_provider, OllamaProviderV2)
+        from unittest.mock import MagicMock, patch
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {"models": [{"name": "llama3.1:latest"}]}
+        with patch("httpx.Client.get", return_value=mock_resp):
+            char_provider = router.route("character", prefer_ollama=True)
+            assert isinstance(char_provider, OllamaProviderV2)

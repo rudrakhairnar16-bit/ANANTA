@@ -318,6 +318,18 @@ class ConcurrentPipelineOrchestrator:
                         raise RuntimeError(f"Stage '{stage}' cancelled before execution")
 
                     if custom_agent is not None:
+                        if hasattr(custom_agent, "run"):
+                            agent_out = custom_agent.run(
+                                stage_inputs,
+                                pipeline_state=pipeline_state,
+                                episode_id=episode_id,
+                            )
+                            with state_lock:
+                                completed_stages_list.append(stage)
+                                if self.settings.pipeline.checkpoint_enabled:
+                                    self.checkpoint_manager.checkpoint(pipeline_state)
+                            return agent_out
+
                         raw_result = custom_agent(stage_inputs)
                         if not isinstance(raw_result, dict):
                             raw_result = {f"{stage}_out": raw_result}

@@ -32,12 +32,17 @@ class ArtifactMetadata:
     schema_version: str = "1.0"
     lineage: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
+    provider_name: str | None = None
+    provider_type: str | None = None
+    is_fallback: bool = False
+    model_name: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "stage": self.stage,
             "version": self.version,
+            "episode_id": self.episode_id,
             "created_at": self.created_at,
             "size_bytes": self.size_bytes,
             "checksum": self.checksum,
@@ -45,11 +50,33 @@ class ArtifactMetadata:
             "schema_version": self.schema_version,
             "lineage": self.lineage,
             "tags": self.tags,
+            "provider_name": self.provider_name,
+            "provider_type": self.provider_type,
+            "is_fallback": self.is_fallback,
+            "model_name": self.model_name,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ArtifactMetadata":
-        return cls(**data)
+        valid_keys = {
+            "name",
+            "stage",
+            "version",
+            "episode_id",
+            "created_at",
+            "size_bytes",
+            "checksum",
+            "content_type",
+            "schema_version",
+            "lineage",
+            "tags",
+            "provider_name",
+            "provider_type",
+            "is_fallback",
+            "model_name",
+        }
+        filtered = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered)
 
 
 @dataclass
@@ -139,6 +166,21 @@ class ArtifactStore:
 
             self._write_payload(artifact_path, data)
 
+            meta_block = data.get("metadata", {}) if isinstance(data, dict) else {}
+            prov_name = meta_block.get("provider_name")
+            prov_type = meta_block.get("provider_type")
+            is_fb = bool(meta_block.get("is_fallback", False))
+            model_nm = meta_block.get("model_name")
+
+            lineage_dict = dict(lineage or {})
+            if prov_name:
+                lineage_dict["provider_name"] = prov_name
+            if prov_type:
+                lineage_dict["provider_type"] = prov_type
+            lineage_dict["is_fallback"] = is_fb
+            if model_nm:
+                lineage_dict["model_name"] = model_nm
+
             metadata = ArtifactMetadata(
                 name=artifact_id,
                 stage=stage,
@@ -146,8 +188,12 @@ class ArtifactStore:
                 episode_id=episode_id,
                 size_bytes=len(data_bytes),
                 checksum=checksum,
-                lineage=lineage or {},
+                lineage=lineage_dict,
                 tags=tags or [],
+                provider_name=prov_name,
+                provider_type=prov_type,
+                is_fallback=is_fb,
+                model_name=model_nm,
             )
 
             self._write_metadata(metadata_path, metadata)

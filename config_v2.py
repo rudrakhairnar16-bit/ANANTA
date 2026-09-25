@@ -11,6 +11,9 @@ class OllamaSettings(BaseModel):
     timeout: int = Field(default=120)
     max_retries: int = Field(default=3)
     temperature: float = Field(default=0.7)
+    health_check_timeout: float = Field(default=3.0)
+    health_check_ttl_seconds: int = Field(default=60)
+    allow_fallback: bool = Field(default=False)
 
     @property
     def enabled(self) -> bool:
@@ -24,6 +27,18 @@ class OllamaSettings(BaseModel):
         self.timeout = int(os.getenv("OLLAMA_TIMEOUT", str(self.timeout)))
         self.max_retries = int(os.getenv("OLLAMA_MAX_RETRIES", str(self.max_retries)))
         self.temperature = float(os.getenv("OLLAMA_TEMPERATURE", str(self.temperature)))
+        self.health_check_timeout = float(
+            os.getenv("OLLAMA_HEALTH_CHECK_TIMEOUT", str(self.health_check_timeout))
+        )
+        self.health_check_ttl_seconds = int(
+            os.getenv("OLLAMA_HEALTH_CHECK_TTL", str(self.health_check_ttl_seconds))
+        )
+        if os.getenv("OLLAMA_ALLOW_FALLBACK"):
+            self.allow_fallback = os.getenv("OLLAMA_ALLOW_FALLBACK", "").lower() in (
+                "true",
+                "1",
+                "yes",
+            )
         return self
 
 

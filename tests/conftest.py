@@ -4,9 +4,12 @@ import pytest
 @pytest.fixture(autouse=True)
 def reset_settings():
     import config
+    import config_v2
     config.reload_settings()
+    config_v2.reload_settings()
     yield
     config.reload_settings()
+    config_v2.reload_settings()
 
 
 @pytest.fixture

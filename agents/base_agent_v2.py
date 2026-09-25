@@ -61,6 +61,9 @@ class BaseAgentV2:
         self._current_episode_id: str | None = None
         self._attempt_count: int = 0
 
+    def __call__(self, inputs: dict[str, Any], **kwargs) -> dict[str, Any]:
+        return self.run(inputs, **kwargs)
+
     def reset_feedback(self):
         self._last_validation_feedback = None
         self._current_episode_id = None
@@ -171,6 +174,50 @@ class BaseAgentV2:
             result_data["generated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
             result_data["inputs"] = {k: v for k, v in inputs.items() if k != "cancellation_token"}
             result_data["approval_status"] = "pending"
+
+            # Attach / synchronize provider metadata
+            provider_type = (
+                getattr(self.provider, "provider_type", "mock")
+                if self.provider
+                else "mock"
+            )
+            provider_name = (
+                getattr(self.provider.config, "name", type(self.provider).__name__)
+                if self.provider and hasattr(self.provider, "config")
+                else (type(self.provider).__name__ if self.provider else "None")
+            )
+            is_fallback = (
+                getattr(self.provider, "is_fallback", False)
+                if self.provider
+                else False
+            )
+            model_name = (
+                getattr(self.provider, "model", None)
+                if self.provider and provider_type == "ollama"
+                else None
+            )
+
+            if "metadata" not in result_data or not isinstance(result_data.get("metadata"), dict):
+                result_data["metadata"] = {}
+
+            result_data["metadata"]["provider_name"] = provider_name
+            result_data["metadata"]["provider_type"] = provider_type
+            result_data["metadata"]["is_fallback"] = is_fallback
+            result_data["metadata"]["model_name"] = model_name
+
+            if is_fallback:
+                fallback_from = getattr(self.provider, "fallback_from_provider", "ollama")
+                result_data["metadata"]["fallback_from"] = fallback_from
+                if "warnings" not in result_data or not isinstance(
+                    result_data.get("warnings"), list
+                ):
+                    result_data["warnings"] = []
+                fallback_warning = (
+                    f"Fallback to mock provider executed for stage '{self.stage}' "
+                    f"because configured real provider was unavailable."
+                )
+                if fallback_warning not in result_data["warnings"]:
+                    result_data["warnings"].append(fallback_warning)
 
             validation_result = self.validator.validate_output(self.stage, result_data)
             if not validation_result.valid:
@@ -290,6 +337,59 @@ class StoryAgentV2(BaseAgentV2):
         return self.provider.generate_sync(inputs)
 
 
+class VoiceAgentV2(BaseAgentV2):
+    def __init__(
+        self,
+        provider: BaseProviderV2 | None = None,
+        tts_provider: Any | None = None,
+        generate_audio: bool = False,
+        **kwargs,
+    ):
+        if provider is None:
+            settings = get_settings()
+            stage_settings = settings.get_stage_settings("voice")
+            use_ollama = stage_settings.provider.type == "ollama"
+            provider = get_provider_for_stage_v2("voice", use_ollama=use_ollama)
+        super().__init__("voice", provider=provider, **kwargs)
+        self.tts_provider = tts_provider
+        self.generate_audio = generate_audio
+
+    def run(
+        self,
+        inputs: dict[str, Any],
+        pipeline_state: PipelineState | None = None,
+        episode_id: str | None = None,
+    ) -> dict[str, Any]:
+        result = super().run(inputs, pipeline_state=pipeline_state, episode_id=episode_id)
+
+        if self.generate_audio or self.tts_provider is not None:
+            from pipeline.dialogue_extractor import extract_dialogue
+            from providers.registry_v2 import get_tts_provider
+
+            tts = self.tts_provider or get_tts_provider("mock")
+            ep_id = episode_id or inputs.get("episode_id", "UNKNOWN")
+            lines = extract_dialogue(inputs)
+
+            if lines:
+                audio_meta = tts.synthesize_dialogue(lines, episode_id=ep_id)
+                audio_dicts = [a.to_dict() for a in audio_meta]
+                result["audio_files"] = audio_dicts
+                if "outputs" in result and isinstance(result["outputs"], dict):
+                    result["outputs"]["audio_files"] = audio_dicts
+                    result["outputs"]["dialogue_lines"] = [line.to_dict() for line in lines]
+                    result["outputs"]["total_audio_duration_seconds"] = sum(
+                        a.duration_seconds for a in audio_meta
+                    )
+
+                self.artifact_manager.store_stage_output(
+                    episode_id=ep_id,
+                    stage="voice",
+                    output_data=result,
+                )
+
+        return result
+
+
 def create_agent_v2(
     stage: str,
     provider: BaseProviderV2 | None = None,
@@ -307,6 +407,7 @@ def create_agent_v2(
 
 AGENT_REGISTRY_V2 = {
     "story": StoryAgentV2,
+    "voice": VoiceAgentV2,
 }
 
 
